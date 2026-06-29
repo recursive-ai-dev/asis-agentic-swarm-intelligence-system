@@ -134,6 +134,9 @@ class Expression:
     __slots__ = ('operator', 'operands', 'bindings', '_hash_cache',
                  '_serialize_cache', '_depth_cache', '_atoms_cache')
 
+    _ZERO_ATOM = ConceptAtom.create("_zero", ConceptCategory.ENTITY, "system")
+    _IDENTITY_ATOM = ConceptAtom.create("_identity", ConceptCategory.ENTITY, "system")
+
     def __init__(
         self,
         operator: Optional[Operator] = None,
@@ -163,6 +166,56 @@ class Expression:
                 wrapped.append(o)
             else:
                 raise TypeError(f"Operand must be Expression or ConceptAtom, got {type(o)}")
+
+        # Double Negation: ¬¬A = A
+        if op == Operator.NEGATE and len(wrapped) == 1:
+            inner = wrapped[0]
+            if inner.operator == Operator.NEGATE and not inner.bindings:
+                return inner.operands[0]
+
+        # Associativity: Flatten nested identical operations
+        if op in (Operator.COMPOSE, Operator.UNION):
+            flattened = []
+            for w in wrapped:
+                if w.operator == op and not w.bindings:
+                    flattened.extend(w.operands)
+                else:
+                    flattened.append(w)
+            wrapped = flattened
+
+        # Idempotence: A ⊕ A = A
+        if op == Operator.UNION:
+            seen = set()
+            unique_wrapped = []
+            for w in wrapped:
+                if w not in seen:
+                    seen.add(w)
+                    unique_wrapped.append(w)
+            wrapped = unique_wrapped
+            if len(wrapped) == 1:
+                return wrapped[0]
+
+        # Identity and Absorption
+        if op == Operator.COMPOSE:
+            # Absorption: A ⊗ _zero = _zero
+            for w in wrapped:
+                if w.is_leaf and w.atom == Expression._ZERO_ATOM:
+                    return Expression.from_atom(Expression._ZERO_ATOM)
+
+            # Identity: A ⊗ _identity = A
+            filtered_wrapped = []
+            for w in wrapped:
+                if not (w.is_leaf and w.atom == Expression._IDENTITY_ATOM):
+                    filtered_wrapped.append(w)
+
+            if not filtered_wrapped:
+                return Expression.from_atom(Expression._IDENTITY_ATOM)
+
+            if len(filtered_wrapped) == 1:
+                return filtered_wrapped[0]
+
+            wrapped = filtered_wrapped
+
         return Expression(operator=op, operands=tuple(wrapped), bindings=bindings)
 
     @property
@@ -323,6 +376,42 @@ class C:
     def guard(condition: Union[Expression, ConceptAtom],
               body: Union[Expression, ConceptAtom]) -> Expression:
         return Expression.from_operator(Operator.GUARD, condition, body)
+
+    @staticmethod
+    def negate(expr: Union[Expression, ConceptAtom]) -> Expression:
+        return Expression.from_operator(Operator.NEGATE, expr)
+
+    @staticmethod
+    def project(expr: Union[Expression, ConceptAtom], field: str) -> Expression:
+        return Expression.from_operator(Operator.PROJECT, expr, bindings={"field": field})
+
+    @staticmethod
+    def inject(expr: Union[Expression, ConceptAtom], target: str) -> Expression:
+        return Expression.from_operator(Operator.INJECT, expr, bindings={"target": target})
+
+    @staticmethod
+    def bind(expr: Union[Expression, ConceptAtom], variable: str, value: Any) -> Expression:
+        return Expression.from_operator(Operator.BIND, expr, bindings={variable: value})
+
+    @staticmethod
+    def reduce(expr: Union[Expression, ConceptAtom], accumulator: str) -> Expression:
+        return Expression.from_operator(Operator.REDUCE, expr, bindings={"acc": accumulator})
+
+    @staticmethod
+    def transform(expr: Union[Expression, ConceptAtom], domain: str) -> Expression:
+        return Expression.from_operator(Operator.TRANSFORM, expr, bindings={"domain": domain})
+
+    @staticmethod
+    def fixpoint(expr: Union[Expression, ConceptAtom]) -> Expression:
+        return Expression.from_operator(Operator.FIXPOINT, expr)
+
+    @staticmethod
+    def identity() -> Expression:
+        return Expression.from_atom(Expression._IDENTITY_ATOM)
+
+    @staticmethod
+    def zero() -> Expression:
+        return Expression.from_atom(Expression._ZERO_ATOM)
 
 
 # ============================================================================
