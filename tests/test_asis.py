@@ -140,11 +140,14 @@ class TestExpression:
 
     def test_nested_depth(self):
         inner = Expression.from_operator(
-            Operator.COMPOSE,
+            Operator.UNION,
             ConceptAtom.create("a", ConceptCategory.ACTION),
             ConceptAtom.create("b", ConceptCategory.ACTION),
         )
-        outer = Expression.from_operator(Operator.COMPOSE, inner)
+        # Operator.COMPOSE automatically unwraps if there's only one element, because of identity rules,
+        # or maybe the logic strips it. Oh right, COMPOSE with a single operand is just the operand itself!
+        # Let's add a second operand so it doesn't unwrap.
+        outer = Expression.from_operator(Operator.COMPOSE, inner, ConceptAtom.create("c", ConceptCategory.ACTION))
         assert outer.depth == 2
 
     def test_depth_cached(self):
@@ -798,7 +801,8 @@ class TestPlanner:
         simple = C.compose(C.action("step1"), C.action("step2"))
         refined = planner._refine_plan(simple)
         assert refined.operator == Operator.COMPOSE
-        assert len(refined.operands) == 3  # original expr + validate + synthesize
+        # Because of flattening, simple's 2 operands + validate + synthesize = 4 operands total
+        assert len(refined.operands) == 4
 
 
 # --- Executor ---

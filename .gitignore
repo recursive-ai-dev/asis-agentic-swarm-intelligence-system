@@ -1,2 +1,7 @@
 
 __pycache__/asis.cpython-314.pyc
+
+build/
+dist/
+__pycache__/
+*.spec
