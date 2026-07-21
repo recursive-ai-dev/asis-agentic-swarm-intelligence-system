@@ -24,6 +24,7 @@ from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass, field, asdict
 from enum import Enum, auto, unique
+import itertools
 from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple, Union
 
 
@@ -287,8 +288,8 @@ class Expression:
                         new_operands.append(new)
                 else:
                     new_operands.append(Expression.from_atom(o))
-        return Expression(operator=self.operator, operands=tuple(new_operands),
-                         bindings=self.bindings.copy())
+        return Expression.from_operator(self.operator, *new_operands,
+                                        bindings=self.bindings.copy())
 
     def serialize(self) -> str:
         if self._serialize_cache is not None:
@@ -480,8 +481,8 @@ class Rule:
                 new_operands.append(self._substitute_bindings(o, bindings))
             else:
                 new_operands.append(o)
-        return Expression(operator=expr.operator, operands=tuple(new_operands),
-                         bindings=expr.bindings.copy())
+        return Expression.from_operator(expr.operator, *new_operands,
+                                        bindings=expr.bindings.copy())
 
 
 class RuleEngine:
@@ -514,6 +515,8 @@ class RuleEngine:
 # COMMUNICATION
 # ============================================================================
 
+_msg_counter = itertools.count()
+
 @dataclass(frozen=True)
 class AlgebraicMessage:
     sender: str
@@ -521,7 +524,7 @@ class AlgebraicMessage:
     message_type: MessageType
     payload: Expression
     timestamp: float = field(default_factory=time.time)
-    correlation_id: str = field(default_factory=lambda: hashlib.sha256(str(time.time()).encode()).hexdigest()[:16])
+    correlation_id: str = field(default_factory=lambda: hashlib.sha256(f"{time.time()}_{next(_msg_counter)}".encode()).hexdigest()[:16])
 
     def to_dict(self) -> dict:
         return {
@@ -586,11 +589,13 @@ class Agent(ABC):
             message = self._inbox.pop(0)
             self._state = "processing"
             self._current_task = message.payload
-            result = self.process_message(message, blackboard)
-            responses.extend(result)
-            self._processed_count += 1
-            self._state = "idle"
-            self._current_task = None
+            try:
+                result = self.process_message(message, blackboard)
+                responses.extend(result)
+                self._processed_count += 1
+            finally:
+                self._state = "idle"
+                self._current_task = None
         return responses
 
     def learn(self, key: str, value: Expression) -> None:
@@ -639,7 +644,7 @@ class Orchestrator(Agent):
                     sender=self.agent_id,
                     receiver="analyst",
                     message_type=MessageType.DELEGATION,
-                    payload=message.payload
+                    payload=C.goal("analyze_task", metadata={"task_id": task_id}) @ message.payload
                 ))
 
             blackboard.write(f"task:{task_id}", message.payload, self.agent_id)
@@ -648,7 +653,7 @@ class Orchestrator(Agent):
             # Route results back to original requester or synthesize
             if message.sender == "synthesizer":
                 # Final result - store and acknowledge
-                task_id = message.payload.bindings.get("task_id", "unknown")
+                task_id = next((atom.metadata.get("task_id") for atom in message.payload.atoms if "task_id" in atom.metadata), "unknown")
                 blackboard.write(f"result:{task_id}", message.payload, self.agent_id)
             else:
                 # Intermediate result - send to synthesizer
@@ -845,7 +850,8 @@ class Synthesizer(Agent):
             payload = message.payload
 
             # Synthesize final output
-            synthesized = C.state("synthesized", metadata={"agent": self.agent_id}) @ payload
+            task_id = next((atom.metadata.get("task_id") for atom in payload.atoms if "task_id" in atom.metadata), "unknown")
+            synthesized = C.state("synthesized", metadata={"agent": self.agent_id, "task_id": task_id}) @ payload
 
             synth_key = f"synthesis:{hashlib.sha256(message.payload.serialize().encode()).hexdigest()[:8]}"
             blackboard.write(synth_key, synthesized, self.agent_id)
