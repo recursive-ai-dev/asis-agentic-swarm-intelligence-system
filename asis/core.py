@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 ASIS 2.0 — Algebraic Swarm Intelligence System
 ===============================================
@@ -8,24 +7,24 @@ forward-chaining rule engine, and real-time visualization export.
 Enhanced Features:
 - Full forward-chaining rule engine with unification
 - Deterministic symbolic execution with traceability
-- JSON/WebSocket export for live dashboard visualization
+- JSON trace export for offline analysis
 - Real problem-solving: planning, validation, synthesis
 - Convergence detection with algebraic fixed-point computation
 """
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
+import itertools
 import json
 import time
-import math
 from abc import ABC, abstractmethod
-from collections import defaultdict
-from copy import deepcopy
-from dataclasses import dataclass, field, asdict
-from enum import Enum, auto, unique
-import itertools
-from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple, Union
+from dataclasses import dataclass, field
+from enum import Enum, unique
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple, Union
+
+__version__ = "2.0.0"
 
 
 # ============================================================================
@@ -102,6 +101,12 @@ class ConceptAtom:
         return dict(self.metadata_tuple)
 
     def serialize(self) -> str:
+        # Metadata is part of atom identity (dataclass equality), so it must be
+        # part of the serialization too — Expression equality and hashing are
+        # defined over serialize(), and omitting it would merge distinct atoms.
+        if self.metadata_tuple:
+            meta = ",".join(f"{k}={v}" for k, v in self.metadata_tuple)
+            return f"ATOM({self.name}:{self.category.value}:{self.domain}{{{meta}}})"
         return f"ATOM({self.name}:{self.category.value}:{self.domain})"
 
     def to_dict(self) -> dict:
@@ -415,6 +420,112 @@ class C:
         return Expression.from_atom(Expression._ZERO_ATOM)
 
 
+class ParseError(ValueError):
+    """Raised by parse_expression for malformed input."""
+
+
+_COMPOSE_TOKENS = ("⊗", "*")
+_UNION_TOKENS = ("⊕", "|")
+_NEGATE_TOKENS = ("¬", "~")
+_ATOM_STOP = set("⊗*⊕|")
+_COMPARATORS = set("<>=≤≥≠")
+
+
+def parse_expression(text: str) -> Expression:
+    """Parse a task written in ASIS notation into an Expression.
+
+    Grammar (⊗ binds tighter than ⊕; ASCII alternatives in brackets)::
+
+        expr  := term  (⊕ [|] term)*
+        term  := unary (⊗ [*] unary)*
+        unary := ¬ [~] unary | "(" expr ")" | atom
+        atom  := [category ":"] name
+
+    ``category`` is any ConceptCategory name, case-insensitive
+    (``goal:ship_it``, ``entity:db``). Without one, text containing a
+    comparison (``latency < 100ms``) is a CONSTRAINT and anything else is a
+    GOAL. Names may contain spaces and balanced parentheses.
+    """
+    parser = _ExpressionParser(text)
+    expr = parser.parse_expr()
+    parser.skip_ws()
+    if not parser.at_end():
+        raise ParseError(f"unexpected {parser.text[parser.pos]!r} at position {parser.pos}")
+    return expr
+
+
+class _ExpressionParser:
+    def __init__(self, text: str):
+        self.text = text
+        self.pos = 0
+
+    def at_end(self) -> bool:
+        return self.pos >= len(self.text)
+
+    def skip_ws(self) -> None:
+        while not self.at_end() and self.text[self.pos].isspace():
+            self.pos += 1
+
+    def accept(self, tokens: Tuple[str, ...]) -> bool:
+        self.skip_ws()
+        if not self.at_end() and self.text[self.pos] in tokens:
+            self.pos += 1
+            return True
+        return False
+
+    def parse_expr(self) -> Expression:
+        operands = [self.parse_term()]
+        while self.accept(_UNION_TOKENS):
+            operands.append(self.parse_term())
+        return operands[0] if len(operands) == 1 else Expression.from_operator(Operator.UNION, *operands)
+
+    def parse_term(self) -> Expression:
+        operands = [self.parse_unary()]
+        while self.accept(_COMPOSE_TOKENS):
+            operands.append(self.parse_unary())
+        return operands[0] if len(operands) == 1 else Expression.from_operator(Operator.COMPOSE, *operands)
+
+    def parse_unary(self) -> Expression:
+        if self.accept(_NEGATE_TOKENS):
+            return Expression.from_operator(Operator.NEGATE, self.parse_unary())
+        if self.accept(("(",)):
+            inner = self.parse_expr()
+            if not self.accept((")",)):
+                raise ParseError(f"expected ')' at position {self.pos}")
+            return inner
+        return self.parse_atom()
+
+    def parse_atom(self) -> Expression:
+        self.skip_ws()
+        start, depth = self.pos, 0
+        while not self.at_end():
+            ch = self.text[self.pos]
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                if depth == 0:
+                    break
+                depth -= 1
+            elif ch in _ATOM_STOP:
+                break
+            self.pos += 1
+        raw = self.text[start:self.pos].strip()
+        if not raw:
+            where = f"at position {start}" if start < len(self.text) else "at end of input"
+            raise ParseError(f"expected a concept {where}")
+
+        category = None
+        prefix, sep, rest = raw.partition(":")
+        if sep and prefix.strip().upper() in ConceptCategory.__members__:
+            category = ConceptCategory[prefix.strip().upper()]
+            raw = rest.strip()
+            if not raw:
+                raise ParseError(f"missing name after '{prefix}:'")
+        if category is None:
+            category = ConceptCategory.CONSTRAINT if _COMPARATORS & set(raw) else ConceptCategory.GOAL
+        return Expression.from_atom(ConceptAtom.create(raw, category))
+
+
 # ============================================================================
 # RULE ENGINE
 # ============================================================================
@@ -453,7 +564,7 @@ class Rule:
             return False
         if len(pattern.operands) != len(target.operands):
             return False
-        for po, to in zip(pattern.operands, target.operands):
+        for po, to in zip(pattern.operands, target.operands, strict=True):
             if isinstance(po, Expression) and isinstance(to, Expression):
                 if not self._match_recursive(po, to, bindings):
                     return False
@@ -532,6 +643,7 @@ class AlgebraicMessage:
             "receiver": self.receiver,
             "message_type": self.message_type.value,
             "payload": self.payload.to_dict(),
+            "payload_text": self.payload.serialize(),
             "timestamp": self.timestamp,
             "correlation_id": self.correlation_id,
         }
@@ -547,7 +659,7 @@ class Blackboard:
         self._data[key] = value
         self._writers[key] = writer
         self._history.append({
-            "timestamp": time.time(),
+            "version": len(self._history),
             "key": key,
             "value": value.serialize(),
             "writer": writer
@@ -653,7 +765,7 @@ class Orchestrator(Agent):
             # Route results back to original requester or synthesize
             if message.sender == "synthesizer":
                 # Final result - store and acknowledge
-                task_id = next((atom.metadata.get("task_id") for atom in message.payload.atoms if "task_id" in atom.metadata), "unknown")
+                task_id = next((atom.metadata["task_id"] for atom in message.payload.atoms if "task_id" in atom.metadata), "unknown")
                 blackboard.write(f"result:{task_id}", message.payload, self.agent_id)
             else:
                 # Intermediate result - send to synthesizer
@@ -674,7 +786,8 @@ class Analyst(Agent):
         self._setup_rules()
 
     def _setup_rules(self) -> None:
-        # Decomposition rules
+        # Decomposition rules. Pattern variables are category-agnostic
+        # wildcards, so the condition restricts this rule to goal atoms.
         self._rule_engine.add_rule(Rule(
             name="decompose_goal",
             pattern=Expression.from_atom(ConceptAtom.create("?g", ConceptCategory.GOAL)),
@@ -682,14 +795,24 @@ class Analyst(Agent):
                 C.action("analyze_requirements"),
                 C.action("identify_constraints"),
                 C.action("assess_feasibility")
-            )
+            ),
+            condition=lambda b: b["g"].is_leaf and b["g"].atom.category == ConceptCategory.GOAL,
         ))
+
+    def _analyze(self, payload: Expression) -> Expression:
+        # Keep the delegation header (which carries the task_id) intact and
+        # analyze each component of the task body independently.
+        if payload.operator == Operator.COMPOSE:
+            head, *body = payload.operands
+            if head.is_leaf and head.atom.name == "analyze_task":
+                return C.compose(head, *(self._rule_engine.evaluate(o) for o in body))
+        return self._rule_engine.evaluate(payload)
 
     def process_message(self, message: AlgebraicMessage, blackboard: Blackboard) -> List[AlgebraicMessage]:
         responses = []
         if message.message_type in (MessageType.QUERY, MessageType.DELEGATION):
             # Analyze the payload
-            analyzed = self._rule_engine.evaluate(message.payload)
+            analyzed = self._analyze(message.payload)
 
             # Store analysis on blackboard
             analysis_key = f"analysis:{hashlib.sha256(message.payload.serialize().encode()).hexdigest()[:8]}"
@@ -770,7 +893,7 @@ class Executor(Agent):
                 for i, operand in enumerate(payload.operands):
                     if isinstance(operand, Expression):
                         step_result = C.state("executed", metadata={
-                            "step": i,
+                            "step": str(i),
                             "status": "success",
                             "agent": self.agent_id
                         }) @ operand
@@ -793,6 +916,20 @@ class Executor(Agent):
                 receiver="validator",
                 message_type=MessageType.VALIDATION,
                 payload=result
+            ))
+        elif message.message_type == MessageType.FEEDBACK:
+            # Validation failed. Re-executing the same deterministic plan would
+            # fail identically, so escalate the failure instead of retrying.
+            self._execution_log.append({
+                "step": None,
+                "input": message.payload.serialize(),
+                "status": "failed"
+            })
+            responses.append(AlgebraicMessage(
+                sender=self.agent_id,
+                receiver="orchestrator",
+                message_type=MessageType.RESULT,
+                payload=message.payload
             ))
         return responses
 
@@ -850,7 +987,7 @@ class Synthesizer(Agent):
             payload = message.payload
 
             # Synthesize final output
-            task_id = next((atom.metadata.get("task_id") for atom in payload.atoms if "task_id" in atom.metadata), "unknown")
+            task_id = next((atom.metadata["task_id"] for atom in payload.atoms if "task_id" in atom.metadata), "unknown")
             synthesized = C.state("synthesized", metadata={"agent": self.agent_id, "task_id": task_id}) @ payload
 
             synth_key = f"synthesis:{hashlib.sha256(message.payload.serialize().encode()).hexdigest()[:8]}"
@@ -870,6 +1007,10 @@ class Synthesizer(Agent):
 # ============================================================================
 
 class SwarmController:
+    # Consecutive steps without any new messages before the swarm is
+    # considered to have reached a fixed point.
+    CONVERGENCE_WINDOW = 3
+
     def __init__(self):
         self._agents: Dict[str, Agent] = {}
         self._blackboard = Blackboard()
@@ -878,69 +1019,106 @@ class SwarmController:
         self._message_log: List[AlgebraicMessage] = []
         self._snapshots: List[Dict[str, Any]] = []
         self._converged = False
+        self._idle_steps = 0
+        self._pending_injections: List[AlgebraicMessage] = []
+        self._message_seq = itertools.count()
+
+    @property
+    def converged(self) -> bool:
+        return self._converged
+
+    @property
+    def step_count(self) -> int:
+        return self._step_count
+
+    @property
+    def latest_snapshot(self) -> Optional[Dict[str, Any]]:
+        """The frame recorded by the most recent step, or None before any step."""
+        return self._snapshots[-1] if self._snapshots else None
+
+    def _stamp(self, message: AlgebraicMessage) -> AlgebraicMessage:
+        # Replace wall-clock metadata with a logical clock so that identical
+        # inputs always produce byte-identical traces.
+        seq = next(self._message_seq)
+        digest = hashlib.sha256(
+            f"{seq}|{message.sender}|{message.receiver}|"
+            f"{message.message_type.value}|{message.payload.serialize()}".encode()
+        ).hexdigest()[:16]
+        return dataclasses.replace(message, timestamp=float(self._step_count),
+                                   correlation_id=digest)
 
     def register_agent(self, agent: Agent) -> None:
         self._agents[agent.agent_id] = agent
 
     def inject_task(self, expression: Expression, sender: str = "user") -> str:
+        if "orchestrator" not in self._agents:
+            raise RuntimeError("inject_task requires an agent registered as 'orchestrator'")
         task_id = hashlib.sha256(expression.serialize().encode()).hexdigest()[:8]
-        message = AlgebraicMessage(
+        message = self._stamp(AlgebraicMessage(
             sender=sender,
             receiver="orchestrator",
             message_type=MessageType.DIRECTIVE,
             payload=expression
-        )
+        ))
         self._agents["orchestrator"].receive(message)
+        # Recorded with the next step so the trace shows where work entered.
+        self._pending_injections.append(message)
+        self._converged = False
+        self._idle_steps = 0
         return task_id
 
     def step(self) -> int:
         messages_processed = 0
+        injected, self._pending_injections = self._pending_injections, []
         new_messages: List[AlgebraicMessage] = []
 
         for agent in self._agents.values():
             responses = agent.process_inbox(self._blackboard)
             for response in responses:
-                new_messages.append(response)
+                new_messages.append(self._stamp(response))
                 messages_processed += 1
 
         # Route messages
         for msg in new_messages:
             if msg.receiver in self._agents:
                 self._agents[msg.receiver].receive(msg)
-            self._message_log.append(msg)
+        self._message_log.extend(injected)
+        self._message_log.extend(new_messages)
 
         self._step_count += 1
 
-        # Take snapshot
-        self._take_snapshot(messages_processed, new_messages)
+        if messages_processed == 0:
+            self._idle_steps += 1
+            if self._idle_steps >= self.CONVERGENCE_WINDOW:
+                self._converged = True
+        else:
+            self._idle_steps = 0
+
+        self._snapshots.append(self.snapshot(messages_processed, injected + new_messages))
 
         return messages_processed
 
-    def _take_snapshot(self, activity: int, new_messages: List[AlgebraicMessage]) -> None:
-        snapshot = {
+    def snapshot(self, activity: int = 0,
+                 messages: Optional[List[AlgebraicMessage]] = None) -> Dict[str, Any]:
+        """Current swarm state in the frame format used by traces and the dashboard."""
+        return {
             "step": self._step_count,
-            "timestamp": time.time(),
             "activity": activity,
+            "converged": self._converged,
             "agents": {aid: agent.to_dict() for aid, agent in self._agents.items()},
             "blackboard": self._blackboard.get_all(),
-            "messages": [msg.to_dict() for msg in new_messages],
+            "messages": [msg.to_dict() for msg in messages or []],
             "message_count": len(self._message_log)
         }
-        self._snapshots.append(snapshot)
 
     def run_until_convergence(self, max_steps: Optional[int] = None) -> Dict[str, Any]:
-        max_steps = max_steps or self._max_steps
-        convergence_count = 0
+        if max_steps is None:
+            max_steps = self._max_steps
 
-        for step in range(max_steps):
-            activity = self.step()
-            if activity == 0:
-                convergence_count += 1
-                if convergence_count >= 3:
-                    self._converged = True
-                    break
-            else:
-                convergence_count = 0
+        for _ in range(max_steps):
+            self.step()
+            if self._converged:
+                break
 
         return {
             "steps_executed": self._step_count,
@@ -953,8 +1131,7 @@ class SwarmController:
     def export_trace(self) -> Dict[str, Any]:
         return {
             "system": "ASIS 2.0",
-            "version": "2.0.0",
-            "timestamp": time.time(),
+            "version": __version__,
             "statistics": {
                 "total_steps": self._step_count,
                 "total_agents": len(self._agents),
@@ -968,7 +1145,7 @@ class SwarmController:
         }
 
     def save_trace(self, filepath: str) -> None:
-        with open(filepath, 'w') as f:
+        with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(self.export_trace(), f, indent=2, default=str)
 
 
@@ -981,28 +1158,3 @@ def create_default_swarm() -> SwarmController:
     controller.register_agent(Validator())
     controller.register_agent(Synthesizer())
     return controller
-
-
-if __name__ == "__main__":
-    swarm = create_default_swarm()
-
-    # Inject a complex task
-    task = C.compose(
-        C.goal("optimize_system"),
-        C.constraint("latency < 100ms"),
-        C.constraint("throughput > 1000rps")
-    )
-
-    task_id = swarm.inject_task(task)
-    result = swarm.run_until_convergence(max_steps=50)
-
-    print(f"Task {task_id} completed!")
-    print(f"Steps: {result['steps_executed']}")
-    print(f"Messages: {result['total_messages']}")
-    print(f"Converged: {result['converged']}")
-
-    try:
-        swarm.save_trace("asis_trace.json")
-        print("Trace saved to asis_trace.json")
-    except (OSError, IOError) as _e:
-        print(f"Note: could not save trace: {_e}")

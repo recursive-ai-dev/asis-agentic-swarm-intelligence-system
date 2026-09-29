@@ -1,7 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
 
-__pycache__/asis.cpython-314.pyc
-
+# Build / packaging
 build/
 dist/
-__pycache__/
 *.spec
+
+# Test & tooling caches
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/

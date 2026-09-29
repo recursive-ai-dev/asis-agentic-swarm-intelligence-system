@@ -1,5 +1,4 @@
-import pytest
-from asis import C, Expression, ConceptAtom, ConceptCategory, Operator
+from asis import C, Operator
 
 def test_associativity_compose():
     A = C.entity("A")

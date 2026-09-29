@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ASIS — Algebraic Swarm Intelligence System | Live Dashboard</title>
+<title>ASIS Dashboard</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Inter:wght@300;400;600;800&display=swap');
 
@@ -167,6 +167,8 @@ body {
   padding: 12px;
   max-height: 300px;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-glow) transparent;
 }
 
 .panel-body::-webkit-scrollbar { width: 4px; }
@@ -422,6 +424,50 @@ body {
   box-shadow: 0 0 20px rgba(0, 240, 255, 0.1);
 }
 
+.modal-help {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: -8px 0 12px;
+}
+
+.modal-help code, .offline-help code {
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--cyan);
+}
+
+.modal-error {
+  min-height: 18px;
+  margin-bottom: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: #ff6b6b;
+}
+
+.offline-help {
+  padding: 8px 4px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+.offline-help p:first-child { color: var(--text-primary); font-weight: 600; }
+.offline-help .btn { margin-top: 10px; }
+
+.btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  box-shadow: none;
+  color: var(--text-secondary);
+  border-color: var(--border-glow);
+}
+
+.btn[hidden] { display: none; }
+
+.status-dot.replay { background: var(--gold); box-shadow: 0 0 10px var(--gold); }
+.status-dot.error { background: #ff4444; box-shadow: 0 0 10px #ff4444; }
+.status-dot.offline { background: var(--text-secondary); box-shadow: none; animation: none; }
+
 .modal-actions {
   display: flex;
   gap: 12px;
@@ -449,18 +495,20 @@ body {
 /* Convergence Banner */
 .convergence-banner {
   position: fixed;
-  top: 80px;
+  top: 16px;
   left: 50%;
   transform: translateX(-50%) translateY(-100px);
+  opacity: 0;
+  visibility: hidden;
   background: rgba(0, 255, 136, 0.1);
   border: 1px solid var(--green);
   border-radius: 12px;
-  padding: 16px 32px;
+  padding: 10px 28px;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 14px;
+  font-size: 13px;
   color: var(--green);
   z-index: 30;
-  transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s, visibility 0.3s;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -468,6 +516,8 @@ body {
 
 .convergence-banner.show {
   transform: translateX(-50%) translateY(0);
+  opacity: 1;
+  visibility: visible;
 }
 
 /* Responsive */
@@ -494,8 +544,8 @@ body {
     </div>
   </div>
   <div class="status-badge">
-    <div class="status-dot"></div>
-    <span id="system-status">SYSTEM ONLINE</span>
+    <div class="status-dot" id="status-dot"></div>
+    <span id="system-status">CONNECTING</span>
   </div>
 </div>
 
@@ -503,7 +553,7 @@ body {
 <div class="ui-layer left-panel panel">
   <div class="panel-header">
     <span>Swarm Agents</span>
-    <span id="agent-count">6 Active</span>
+    <span id="agent-count">0 Agents</span>
   </div>
   <div class="panel-body" id="agent-list"></div>
 </div>
@@ -525,8 +575,8 @@ body {
         <div class="metric-label">Throughput</div>
       </div>
       <div class="metric-card">
-        <div class="metric-value" id="metric-tasks">0</div>
-        <div class="metric-label">Tasks</div>
+        <div class="metric-value" id="metric-tasks">0/0</div>
+        <div class="metric-label">Tasks Done</div>
       </div>
       <div class="metric-card">
         <div class="metric-value" id="metric-convergence">--</div>
@@ -558,9 +608,12 @@ body {
 
 <!-- Controls -->
 <div class="ui-layer controls">
-  <button class="btn" onclick="togglePause()" id="pause-btn">Pause</button>
-  <button class="btn primary" onclick="openModal()">Inject Task</button>
-  <button class="btn" onclick="resetSimulation()">Reset</button>
+  <button class="btn" onclick="togglePause()" id="pause-btn" title="Space">Pause</button>
+  <button class="btn" onclick="stepOnce()" id="step-btn" title="Right arrow">Step</button>
+  <button class="btn primary" onclick="openModal()" id="inject-btn">Inject Task</button>
+  <button class="btn" onclick="resetSimulation()" id="reset-btn">Reset</button>
+  <button class="btn" onclick="document.getElementById('trace-file').click()" id="load-btn">Load Trace</button>
+  <input type="file" id="trace-file" accept=".json,application/json" hidden>
 </div>
 
 <!-- Convergence Banner -->
@@ -573,8 +626,13 @@ body {
 <div class="modal-overlay" id="modal">
   <div class="modal">
     <h2>Inject Algebraic Task</h2>
-    <textarea id="task-input" placeholder="Enter task expression...
-Example: optimize_system ⊗ latency<100ms ⊗ throughput>1000rps"></textarea>
+    <textarea id="task-input" placeholder="optimize_system ⊗ latency < 100ms ⊗ throughput > 1000rps"></textarea>
+    <div class="modal-help">
+      <code>⊗</code>/<code>*</code> compose · <code>⊕</code>/<code>|</code> union · <code>¬</code>/<code>~</code> negate · <code>( )</code> group<br>
+      Prefix a category with <code>goal:</code>, <code>action:</code>, <code>entity:</code>, <code>state:</code>…
+      Otherwise text with a comparison is a constraint and anything else is a goal.
+    </div>
+    <div class="modal-error" id="modal-error" role="alert"></div>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal()">Cancel</button>
       <button class="btn primary" onclick="injectTask()">Inject</button>
@@ -587,17 +645,27 @@ Example: optimize_system ⊗ latency<100ms ⊗ throughput>1000rps"></textarea>
 
 <script>
 // ============================================================================
-// ASIS SIMULATION ENGINE (JavaScript)
+// ASIS DASHBOARD CLIENT
+// ----------------------------------------------------------------------------
+// This page contains no simulation logic. Every agent, message and expression
+// shown here comes from the Python engine, either live (served by
+// `asis dashboard`) or replayed from a trace file written by `asis run`.
+// Both sources deliver the same "frame" shape: a SwarmController snapshot.
 // ============================================================================
 
-const AGENT_CONFIGS = [
-  { id: 'orchestrator', role: 'ORCHESTRATOR', color: '#00f0ff', x: 0, y: -120 },
-  { id: 'analyst', role: 'ANALYST', color: '#b829dd', x: -180, y: -40 },
-  { id: 'planner', role: 'PLANNER', color: '#ff00aa', x: 180, y: -40 },
-  { id: 'executor', role: 'EXECUTOR', color: '#00ff88', x: -120, y: 100 },
-  { id: 'validator', role: 'VALIDATOR', color: '#ffd700', x: 0, y: 140 },
-  { id: 'synthesizer', role: 'SYNTHESIZER', color: '#ff8800', x: 120, y: 100 }
-];
+const STEP_INTERVAL_MS = 800;
+
+// Visual layout per agent id. Agents the engine reports that are not listed
+// here are placed on a ring around the centre.
+const AGENT_STYLE = {
+  orchestrator: { color: '#00f0ff', x: 0, y: -120 },
+  analyst: { color: '#b829dd', x: -180, y: -40 },
+  planner: { color: '#ff00aa', x: 180, y: -40 },
+  executor: { color: '#00ff88', x: -120, y: 100 },
+  validator: { color: '#ffd700', x: 0, y: 140 },
+  synthesizer: { color: '#ff8800', x: 120, y: 100 }
+};
+const FALLBACK_COLORS = ['#7aa2ff', '#ff6b6b', '#c3e88d', '#f78c6c', '#89ddff'];
 
 const MESSAGE_TYPES = {
   DIRECTIVE: { color: '#00f0ff', class: 'msg-directive' },
@@ -606,303 +674,154 @@ const MESSAGE_TYPES = {
   VALIDATION: { color: '#ffd700', class: 'msg-validation' },
   SYNTHESIS: { color: '#ff00aa', class: 'msg-synthesis' },
   DELEGATION: { color: '#ff8800', class: 'msg-directive' },
-  FEEDBACK: { color: '#ff4444', class: 'msg-validation' }
+  FEEDBACK: { color: '#ff4444', class: 'msg-validation' },
+  SIGNAL: { color: '#8888a0', class: '' },
+  CONSTRAINT: { color: '#ff6b6b', class: 'msg-validation' },
+  HEARTBEAT: { color: '#8888a0', class: '' }
 };
 
-class ConceptAtom {
-  constructor(name, category, domain = 'general', metadata = {}) {
-    this.name = name;
-    this.category = category;
-    this.domain = domain;
-    this.metadata = metadata;
-  }
-  serialize() { return `ATOM(${this.name}:${this.category}:${this.domain})`; }
+const CATEGORY_COLORS = {
+  GOAL: '#00f0ff', CONSTRAINT: '#ff6b6b', ACTION: '#00ff88', STATE: '#ffd700',
+  ENTITY: '#b829dd', PROPERTY: '#ff8800', RELATION: '#ff00aa', METRIC: '#7aa2ff'
+};
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[c]);
 }
 
-class Expression {
-  constructor(operator = null, operands = [], bindings = {}) {
-    this.operator = operator;
-    this.operands = operands;
-    this.bindings = bindings;
-    this._depth = null;
-  }
+function truncate(text, n) {
+  return text.length > n ? text.slice(0, n) + '…' : text;
+}
 
-  static fromAtom(atom) { return new Expression(null, [atom]); }
-  static compose(...exprs) { return new Expression('⊗', exprs); }
-  static union(...exprs) { return new Expression('⊕', exprs); }
-  static guard(cond, body) { return new Expression('γ', [cond, body]); }
-
-  get isLeaf() { return !this.operator && this.operands.length === 1 && this.operands[0] instanceof ConceptAtom; }
-  get atom() { return this.isLeaf ? this.operands[0] : null; }
-
-  get depth() {
-    if (this._depth !== null) return this._depth;
-    if (this.isLeaf) return this._depth = 0;
-    return this._depth = 1 + Math.max(...this.operands.map(o => o instanceof Expression ? o.depth : 0));
-  }
-
-  serialize() {
-    if (this.isLeaf) return this.operands[0].serialize();
-    const parts = [this.operator];
-    if (Object.keys(this.bindings).length) {
-      const b = Object.entries(this.bindings).map(([k,v]) => `${k}=${v}`).join(',');
-      parts.push(`[${b}]`);
-    }
-    for (const o of this.operands) parts.push(o instanceof Expression ? o.serialize() : o.serialize());
-    return `(${parts.join(' ')})`;
-  }
-
-  toDict() {
-    if (this.isLeaf) return { type: 'atom', name: this.atom.name, category: this.atom.category };
-    return {
-      type: 'expression',
-      operator: this.operator,
-      bindings: this.bindings,
-      operands: this.operands.map(o => o.toDict())
+class AgentView {
+  constructor(id, role, index) {
+    const style = AGENT_STYLE[id] || {
+      color: FALLBACK_COLORS[index % FALLBACK_COLORS.length],
+      x: Math.cos(index * 1.05) * 240,
+      y: Math.sin(index * 1.05) * 160
     };
-  }
-}
-
-// Factory
-const C = {
-  entity: (n, d='general', m={}) => Expression.fromAtom(new ConceptAtom(n, 'ENTITY', d, m)),
-  action: (n, d='general', m={}) => Expression.fromAtom(new ConceptAtom(n, 'ACTION', d, m)),
-  goal: (n, d='general', m={}) => Expression.fromAtom(new ConceptAtom(n, 'GOAL', d, m)),
-  constraint: (n, d='general', m={}) => Expression.fromAtom(new ConceptAtom(n, 'CONSTRAINT', d, m)),
-  state: (n, d='general', m={}) => Expression.fromAtom(new ConceptAtom(n, 'STATE', d, m)),
-  property: (n, d='general', m={}) => Expression.fromAtom(new ConceptAtom(n, 'PROPERTY', d, m)),
-  compose: (...exprs) => Expression.compose(...exprs),
-  union: (...exprs) => Expression.union(...exprs),
-  guard: (c, b) => Expression.guard(c, b)
-};
-
-class Agent {
-  constructor(config) {
-    this.id = config.id;
-    this.role = config.role;
-    this.color = config.color;
-    this.x = config.x;
-    this.y = config.y;
-    this.vx = 0;
-    this.vy = 0;
-    this.targetX = config.x;
-    this.targetY = config.y;
-    this.state = 'idle';
-    this.inbox = [];
+    this.id = id;
+    this.role = role;
+    this.color = style.color;
+    this.x = style.x;
+    this.y = style.y;
     this.processed = 0;
-    this.knowledge = {};
-    this.pulsePhase = Math.random() * Math.PI * 2;
+    this.inboxSize = 0;
+    this.activeUntil = 0;
+    this.pulsePhase = index * 1.3;
     this.connections = new Set();
   }
 
-  receive(msg) { this.inbox.push(msg); }
+  get state() {
+    return performance.now() < this.activeUntil ? 'processing' : 'idle';
+  }
+}
 
-  process(blackboard, step) {
-    const responses = [];
-    while (this.inbox.length > 0) {
-      const msg = this.inbox.shift();
-      this.state = 'processing';
-      this.processed++;
+// ----------------------------------------------------------------------------
+// Frame sources
+// ----------------------------------------------------------------------------
 
-      // Agent-specific logic
-      const r = this._handle(msg, blackboard, step);
-      responses.push(...r);
+class LiveSource {
+  constructor() { this.kind = 'live'; }
 
-      // Update connections
-      this.connections.add(msg.sender);
-      if (r.length > 0) {
-        r.forEach(m => {
-          const target = simulation.agents.find(a => a.id === m.receiver);
-          if (target) target.connections.add(this.id);
-        });
-      }
+  async request(method, path, body) {
+    const res = await fetch(path, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  }
+
+  state() { return this.request('GET', '/api/state'); }
+  step() { return this.request('POST', '/api/step', {}); }
+  reset() { return this.request('POST', '/api/reset', {}); }
+  inject(task) { return this.request('POST', '/api/inject', { task }); }
+}
+
+class ReplaySource {
+  constructor(trace, name) {
+    if (!trace || !Array.isArray(trace.snapshots)) {
+      throw new Error('not an ASIS trace (no "snapshots" array)');
     }
-    if (this.inbox.length === 0) this.state = 'idle';
-    return responses;
+    this.kind = 'replay';
+    this.name = name;
+    this.trace = trace;
+    this.index = 0;
   }
 
-  _handle(msg, bb, step) {
-    const payload = msg.payload;
+  get finished() { return this.index >= this.trace.snapshots.length; }
 
-    switch(this.role) {
-      case 'ORCHESTRATOR':
-        if (msg.type === 'DIRECTIVE') {
-          const taskId = hash(payload.serialize()).slice(0,8);
-          bb.set(`task:${taskId}`, payload);
-          if (payload.operator === '⊗') {
-            return [new Message(this.id, 'planner', 'DELEGATION', 
-              C.compose(C.goal('plan_task', 'general', {task_id: taskId}), payload), step)];
-          }
-          return [new Message(this.id, 'analyst', 'DELEGATION', payload, step)];
-        }
-        if (msg.type === 'RESULT') {
-          if (msg.sender === 'synthesizer') {
-            const taskId = msg.payload.bindings.task_id || 'unknown';
-            bb.set(`result:${taskId}`, msg.payload);
-          } else {
-            return [new Message(this.id, 'synthesizer', 'SYNTHESIS', msg.payload, step)];
-          }
-        }
-        return [];
+  initialFrame() {
+    const first = this.trace.snapshots[0];
+    const agents = first ? first.agents : (this.trace.agents || {});
+    return { step: 0, activity: 0, converged: false, agents, blackboard: {}, messages: [], message_count: 0 };
+  }
 
-      case 'ANALYST':
-        if (msg.type === 'DELEGATION') {
-          const analyzed = C.compose(C.action('analyze_requirements'), C.action('identify_constraints'), C.action('assess_feasibility'));
-          const key = `analysis:${hash(msg.payload.serialize()).slice(0,8)}`;
-          bb.set(key, analyzed);
-          return [new Message(this.id, 'orchestrator', 'RESULT', C.compose(C.state('analyzed'), analyzed), step)];
-        }
-        return [];
+  async state() { return this.initialFrame(); }
 
-      case 'PLANNER':
-        if (msg.type === 'DELEGATION') {
-          const plan = C.compose(
-            C.action('prepare', 'general', {phase: '1'}),
-            C.action('execute_core', 'general', {phase: '2'}),
-            C.action('validate', 'general', {phase: '3'}),
-            C.action('finalize', 'general', {phase: '4'})
-          );
-          const key = `plan:${hash(msg.payload.serialize()).slice(0,8)}`;
-          bb.set(key, plan);
-          return [
-            new Message(this.id, 'executor', 'DIRECTIVE', plan, step),
-            new Message(this.id, 'orchestrator', 'RESULT', C.compose(C.state('planned'), plan), step)
-          ];
-        }
-        return [];
-
-      case 'EXECUTOR':
-        if (msg.type === 'DIRECTIVE') {
-          let result;
-          if (payload.operator === '⊗') {
-            const steps = payload.operands.map((op, i) => 
-              C.compose(C.state('executed', 'general', {step: i, status: 'success'}), op)
-            );
-            result = steps.length > 1 ? C.compose(...steps) : steps[0];
-          } else {
-            result = C.compose(C.state('executed'), payload);
-          }
-          const key = `execution:${hash(msg.payload.serialize()).slice(0,8)}`;
-          bb.set(key, result);
-          return [new Message(this.id, 'validator', 'VALIDATION', result, step)];
-        }
-        return [];
-
-      case 'VALIDATOR':
-        if (msg.type === 'VALIDATION') {
-          const isValid = !payload.serialize().includes('error');
-          const result = C.compose(C.state('validated', 'general', {status: isValid ? 'passed' : 'failed'}), payload);
-          const key = `validation:${hash(msg.payload.serialize()).slice(0,8)}`;
-          bb.set(key, result);
-          if (isValid) {
-            return [new Message(this.id, 'synthesizer', 'SYNTHESIS', result, step)];
-          } else {
-            return [new Message(this.id, 'executor', 'FEEDBACK', result, step)];
-          }
-        }
-        return [];
-
-      case 'SYNTHESIZER':
-        if (msg.type === 'SYNTHESIS') {
-          const synthesized = C.compose(C.state('synthesized', 'general', {agent: this.id}), msg.payload);
-          const key = `synthesis:${hash(msg.payload.serialize()).slice(0,8)}`;
-          bb.set(key, synthesized);
-          return [new Message(this.id, 'orchestrator', 'RESULT', synthesized, step)];
-        }
-        return [];
+  async step() {
+    if (this.finished) return null;
+    const frame = this.trace.snapshots[this.index++];
+    // Traces from before 2.0.0 lack a per-frame flag; fall back to the summary.
+    if (frame.converged === undefined && this.finished) {
+      return { ...frame, converged: !!(this.trace.statistics && this.trace.statistics.converged) };
     }
-    return [];
+    return frame;
   }
+
+  async reset() { this.index = 0; return this.initialFrame(); }
 }
 
-class Message {
-  constructor(sender, receiver, type, payload, step) {
-    this.sender = sender;
-    this.receiver = receiver;
-    this.type = type;
-    this.payload = payload;
-    this.step = step;
-    this.id = Math.random().toString(36).slice(2, 10);
-    this.timestamp = Date.now();
-    this.progress = 0;
-    this.speed = 0.02 + Math.random() * 0.03;
-  }
+// ----------------------------------------------------------------------------
+// Dashboard
+// ----------------------------------------------------------------------------
 
-  get displayText() {
-    const p = this.payload.serialize();
-    return p.length > 50 ? p.slice(0, 50) + '...' : p;
-  }
-}
-
-class Blackboard {
+class Dashboard {
   constructor() {
-    this.data = new Map();
-    this.history = [];
-  }
-  set(key, value) {
-    this.data.set(key, value);
-    this.history.push({key, value: value.serialize(), time: Date.now()});
-  }
-  get(key) { return this.data.get(key); }
-  getAll() { return Array.from(this.data.entries()).map(([k,v]) => ({key: k, value: v.serialize()})); }
-}
-
-function hash(str) {
-  let h = 0;
-  for (let i = 0; i < str.length; i++) {
-    h = ((h << 5) - h) + str.charCodeAt(i);
-    h |= 0;
-  }
-  return Math.abs(h).toString(16);
-}
-
-// ============================================================================
-// VISUALIZATION ENGINE
-// ============================================================================
-
-class Simulation {
-  constructor() {
-    this.agents = AGENT_CONFIGS.map(c => new Agent(c));
-    this.blackboard = new Blackboard();
-    this.messages = [];
+    this.source = null;
+    this.agents = [];
+    this.agentsById = new Map();
     this.activePackets = [];
-    this.step = 0;
-    this.running = true;
-    this.converged = false;
-    this.convergenceCount = 0;
-    this.messageLog = [];
-    this.maxLogSize = 50;
-    this.tasks = 0;
+    this.particles = [];
     this.paused = false;
+    this.converged = false;
+    this.inFlight = false;
+    this.connected = true;
+    this.treePayload = null;
+    this.treeText = '';
+    this.messageTimes = [];
+    this.gridOffset = 0;
+    this.mouseX = -1000;
+    this.mouseY = -1000;
+    this.hoveredAgent = null;
+    this.selectedAgent = null;
 
-    // Canvas setup
     this.bgCanvas = document.getElementById('bg-canvas');
     this.mainCanvas = document.getElementById('main-canvas');
     this.bgCtx = this.bgCanvas.getContext('2d');
     this.ctx = this.mainCanvas.getContext('2d');
     this.resize();
-    window.addEventListener('resize', () => this.resize());
+    window.addEventListener('resize', () => { this.resize(); this.drawExpressionTree(); });
 
-    // Mouse interaction
-    this.mouseX = 0;
-    this.mouseY = 0;
-    this.hoveredAgent = null;
     this.mainCanvas.addEventListener('mousemove', e => {
       this.mouseX = e.clientX;
       this.mouseY = e.clientY;
     });
-    this.mainCanvas.addEventListener('click', e => {
+    this.mainCanvas.addEventListener('click', () => {
       if (this.hoveredAgent) {
         this.selectedAgent = this.hoveredAgent;
+        this.updateAgentList();
       }
     });
 
-    this.selectedAgent = null;
-    this.particles = [];
-    this.gridOffset = 0;
-
-    this.setupUI();
+    this.drawExpressionTree();
     this.loop();
+    setInterval(() => this.tick(), STEP_INTERVAL_MS);
   }
 
   resize() {
@@ -913,97 +832,191 @@ class Simulation {
     this.mainCanvas.width = this.width;
     this.mainCanvas.height = this.height;
     this.centerX = this.width / 2;
-    this.centerY = this.height / 2;
+    // Centre the graph in the band between the header (~80px) and the
+    // control buttons (fixed 240px + ~56px from the bottom), offset for the
+    // graph's asymmetric extent (nodes span -148..+204 including labels).
+    this.centerY = Math.max(180, (80 + this.height - 296) / 2 - 28);
   }
 
-  setupUI() {
-    this.updateAgentList();
+  // --- source management ----------------------------------------------------
+
+  async connect(source) {
+    this.source = source;
+    this.clearView();
+    try {
+      this.applyFrame(await source.state());
+      this.setConnected(true);
+    } catch (err) {
+      this.setConnected(false, err);
+    }
+    this.updateModeUI();
   }
 
-  injectTask(expression) {
-    this.tasks++;
-    const msg = new Message('user', 'orchestrator', 'DIRECTIVE', expression, this.step);
-    const orch = this.agents.find(a => a.id === 'orchestrator');
-    orch.receive(msg);
-    this.messages.push(msg);
-    this.addLogEntry(msg);
+  clearView() {
+    this.agents = [];
+    this.agentsById = new Map();
+    this.activePackets = [];
     this.converged = false;
-    this.convergenceCount = 0;
+    this.treePayload = null;
+    this.treeText = '';
+    this.messageTimes = [];
+    document.getElementById('message-log').innerHTML = '';
     document.getElementById('convergence-banner').classList.remove('show');
+    this.drawExpressionTree();
   }
 
-  stepSimulation() {
-    if (this.paused || this.converged) return;
-
-    this.step++;
-    let activity = 0;
-    const newMessages = [];
-
-    for (const agent of this.agents) {
-      const responses = agent.process(this.blackboard, this.step);
-      for (const msg of responses) {
-        newMessages.push(msg);
-        activity++;
-      }
-    }
-
-    for (const msg of newMessages) {
-      const target = this.agents.find(a => a.id === msg.receiver);
-      if (target) {
-        target.receive(msg);
-        this.activePackets.push({
-          message: msg,
-          from: this.agents.find(a => a.id === msg.sender),
-          to: target,
-          progress: 0,
-          speed: 0.015 + Math.random() * 0.02
-        });
-      }
-      this.messages.push(msg);
-      this.addLogEntry(msg);
-    }
-
-    // Convergence detection
-    if (activity === 0) {
-      this.convergenceCount++;
-      if (this.convergenceCount >= 3) {
-        this.converged = true;
-        document.getElementById('convergence-banner').classList.add('show');
-        setTimeout(() => {
-          document.getElementById('convergence-banner').classList.remove('show');
-        }, 4000);
-      }
+  setConnected(ok, err) {
+    this.connected = ok;
+    const dot = document.getElementById('status-dot');
+    const label = document.getElementById('system-status');
+    if (!this.source) {
+      dot.className = 'status-dot offline';
+      label.textContent = 'NO ENGINE';
+    } else if (this.source.kind === 'live') {
+      dot.className = ok ? 'status-dot' : 'status-dot error';
+      label.textContent = ok ? 'LIVE ENGINE' : 'ENGINE UNREACHABLE';
+      label.title = ok ? '' : String(err && err.message || err);
     } else {
-      this.convergenceCount = 0;
+      dot.className = 'status-dot replay';
+      label.textContent = `REPLAY · ${this.source.name}`;
+    }
+  }
+
+  updateModeUI() {
+    const live = this.source && this.source.kind === 'live';
+    const injectBtn = document.getElementById('inject-btn');
+    injectBtn.disabled = !live;
+    injectBtn.title = live ? 'Ctrl+Enter' : 'Task injection needs the live engine: run `asis dashboard`';
+    document.getElementById('load-btn').hidden = live;
+    for (const id of ['pause-btn', 'step-btn', 'reset-btn']) {
+      document.getElementById(id).disabled = !this.source;
+    }
+    document.getElementById('reset-btn').textContent = live ? 'Reset' : 'Restart';
+    this.setConnected(this.connected);
+  }
+
+  // --- stepping -------------------------------------------------------------
+
+  async tick() {
+    if (this.paused || this.converged) return;
+    await this.stepOnce();
+  }
+
+  async stepOnce() {
+    if (!this.source || this.inFlight) return;
+    if (this.source.kind === 'replay' && this.source.finished) return;
+    this.inFlight = true;
+    try {
+      const frame = await this.source.step();
+      if (frame) this.applyFrame(frame);
+      if (!this.connected) this.setConnected(true);
+    } catch (err) {
+      this.setConnected(false, err);
+    } finally {
+      this.inFlight = false;
+    }
+  }
+
+  async reset() {
+    if (!this.source) return;
+    this.clearView();
+    try {
+      this.applyFrame(await this.source.reset());
+      this.setConnected(true);
+    } catch (err) {
+      this.setConnected(false, err);
+    }
+  }
+
+  async inject(text) {
+    const frame = await this.source.inject(text);
+    this.applyFrame(frame);
+    return frame;
+  }
+
+  // --- frame application ----------------------------------------------------
+
+  ensureAgent(id, role) {
+    let agent = this.agentsById.get(id);
+    if (!agent) {
+      agent = new AgentView(id, role, this.agents.length);
+      this.agents.push(agent);
+      this.agentsById.set(id, agent);
+    }
+    return agent;
+  }
+
+  applyFrame(frame) {
+    const now = performance.now();
+
+    for (const [id, info] of Object.entries(frame.agents || {})) {
+      const agent = this.ensureAgent(id, info.role);
+      agent.processed = info.processed_count;
+      agent.inboxSize = info.inbox_size;
     }
 
-    // Update UI
-    document.getElementById('step-counter').textContent = `Step ${this.step}`;
-    document.getElementById('metric-messages').textContent = this.messages.length;
-    document.getElementById('metric-throughput').textContent = activity;
-    document.getElementById('metric-tasks').textContent = this.tasks;
-    document.getElementById('metric-convergence').textContent = this.converged ? 'YES' : 'NO';
-    document.getElementById('metric-convergence').style.color = this.converged ? 'var(--green)' : 'var(--text-secondary)';
+    for (const msg of frame.messages || []) {
+      this.addLogEntry(msg);
+      this.messageTimes.push(now);
+      const from = this.agentsById.get(msg.sender);
+      const to = this.agentsById.get(msg.receiver);
+      if (from) from.activeUntil = now + STEP_INTERVAL_MS;
+      if (from && to) {
+        from.connections.add(to.id);
+        this.activePackets.push({ type: msg.message_type, from, to, progress: 0, speed: 0.025 });
+      }
+    }
+
+    const messages = frame.messages || [];
+    const last = messages[messages.length - 1];
+    if (last && last.payload) {
+      this.treePayload = last.payload;
+      this.treeText = last.payload_text || '';
+      this.drawExpressionTree();
+    }
+
+    const keys = Object.keys(frame.blackboard || {});
+    const tasks = keys.filter(k => k.startsWith('task:')).length;
+    const done = keys.filter(k => k.startsWith('result:')).length;
+
+    document.getElementById('step-counter').textContent = `Step ${frame.step}`;
+    document.getElementById('metric-messages').textContent = frame.message_count;
+    document.getElementById('metric-throughput').textContent = frame.activity;
+    document.getElementById('metric-tasks').textContent = `${done}/${tasks}`;
+    document.getElementById('agent-count').textContent = `${this.agents.length} Agents`;
+
+    const wasConverged = this.converged;
+    this.converged = !!frame.converged;
+    const conv = document.getElementById('metric-convergence');
+    conv.textContent = frame.step === 0 && !this.converged ? '--' : (this.converged ? 'YES' : 'NO');
+    conv.style.color = this.converged ? 'var(--green)' : 'var(--text-secondary)';
+    if (this.converged && !wasConverged && frame.step > 0) this.showBanner();
 
     this.updateAgentList();
+  }
+
+  showBanner() {
+    const banner = document.getElementById('convergence-banner');
+    banner.classList.add('show');
+    clearTimeout(this.bannerTimer);
+    this.bannerTimer = setTimeout(() => banner.classList.remove('show'), 4000);
   }
 
   addLogEntry(msg) {
     const log = document.getElementById('message-log');
     const entry = document.createElement('div');
-    const mt = MESSAGE_TYPES[msg.type] || { color: '#888', class: '' };
+    const mt = MESSAGE_TYPES[msg.message_type] || { color: '#888', class: '' };
     entry.className = `message-item ${mt.class}`;
+    entry.title = msg.payload_text || '';
     entry.innerHTML = `
       <div class="msg-header">
-        <span><strong>${msg.sender}</strong> → <strong>${msg.receiver}</strong></span>
-        <span class="msg-type" style="color: ${mt.color}">${msg.type}</span>
+        <span><strong>${escapeHtml(msg.sender)}</strong> → <strong>${escapeHtml(msg.receiver)}</strong></span>
+        <span class="msg-type" style="color: ${mt.color}">${escapeHtml(msg.message_type)}</span>
       </div>
-      <div class="msg-payload">${msg.displayText}</div>
+      <div class="msg-payload">${escapeHtml(truncate(msg.payload_text || '', 90))}</div>
     `;
     log.insertBefore(entry, log.firstChild);
-    while (log.children.length > this.maxLogSize) {
-      log.removeChild(log.lastChild);
-    }
+    while (log.children.length > 50) log.removeChild(log.lastChild);
   }
 
   updateAgentList() {
@@ -1011,14 +1024,15 @@ class Simulation {
     list.innerHTML = '';
     for (const agent of this.agents) {
       const item = document.createElement('div');
+      const state = agent.state;
       item.className = `agent-item ${this.selectedAgent === agent ? 'active' : ''}`;
       item.innerHTML = `
         <div class="agent-color" style="background: ${agent.color}; box-shadow: 0 0 10px ${agent.color}"></div>
         <div class="agent-info">
-          <div class="agent-name">${agent.id}</div>
-          <div class="agent-role">${agent.role} • ${agent.processed} processed</div>
+          <div class="agent-name">${escapeHtml(agent.id)}</div>
+          <div class="agent-role">${escapeHtml(agent.role)} • ${agent.processed} processed</div>
         </div>
-        <div class="agent-status ${agent.state}">${agent.state}</div>
+        <div class="agent-status ${state}">${state}</div>
       `;
       item.addEventListener('click', () => {
         this.selectedAgent = agent;
@@ -1028,21 +1042,17 @@ class Simulation {
     }
   }
 
-  // ============================================================================
-  // RENDERING
-  // ============================================================================
+  // --- rendering ------------------------------------------------------------
 
   drawBackground() {
     const ctx = this.bgCtx;
     ctx.fillStyle = '#050508';
     ctx.fillRect(0, 0, this.width, this.height);
 
-    // Grid
     ctx.strokeStyle = 'rgba(0, 240, 255, 0.03)';
     ctx.lineWidth = 1;
     const gridSize = 50;
     this.gridOffset = (this.gridOffset + 0.2) % gridSize;
-
     for (let x = this.gridOffset; x < this.width; x += gridSize) {
       ctx.beginPath();
       ctx.moveTo(x, 0);
@@ -1056,7 +1066,6 @@ class Simulation {
       ctx.stroke();
     }
 
-    // Subtle vignette
     const gradient = ctx.createRadialGradient(this.centerX, this.centerY, 0, this.centerX, this.centerY, Math.max(this.width, this.height) * 0.7);
     gradient.addColorStop(0, 'rgba(0, 240, 255, 0.01)');
     gradient.addColorStop(1, 'rgba(0, 0, 0, 0.4)');
@@ -1066,21 +1075,16 @@ class Simulation {
 
   drawConnections() {
     const ctx = this.ctx;
-
     for (const agent of this.agents) {
       for (const otherId of agent.connections) {
-        const other = this.agents.find(a => a.id === otherId);
+        const other = this.agentsById.get(otherId);
         if (!other) continue;
-
         const x1 = this.centerX + agent.x;
         const y1 = this.centerY + agent.y;
         const x2 = this.centerX + other.x;
         const y2 = this.centerY + other.y;
-
         const dist = Math.hypot(x2 - x1, y2 - y1);
-        const opacity = Math.max(0.02, 0.15 - dist / 2000);
-
-        ctx.strokeStyle = `rgba(0, 240, 255, ${opacity})`;
+        ctx.strokeStyle = `rgba(0, 240, 255, ${Math.max(0.02, 0.15 - dist / 2000)})`;
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(x1, y1);
@@ -1092,40 +1096,31 @@ class Simulation {
 
   drawPackets() {
     const ctx = this.ctx;
-
     for (let i = this.activePackets.length - 1; i >= 0; i--) {
       const pkt = this.activePackets[i];
       pkt.progress += pkt.speed;
-
       if (pkt.progress >= 1) {
         this.activePackets.splice(i, 1);
         continue;
       }
-
-      const from = pkt.from;
-      const to = pkt.to;
-      const x1 = this.centerX + from.x;
-      const y1 = this.centerY + from.y;
-      const x2 = this.centerX + to.x;
-      const y2 = this.centerY + to.y;
-
+      const x1 = this.centerX + pkt.from.x;
+      const y1 = this.centerY + pkt.from.y;
+      const x2 = this.centerX + pkt.to.x;
+      const y2 = this.centerY + pkt.to.y;
       const t = pkt.progress;
       const x = x1 + (x2 - x1) * t;
       const y = y1 + (y2 - y1) * t;
+      const color = (MESSAGE_TYPES[pkt.type] || { color: '#fff' }).color;
 
-      const mt = MESSAGE_TYPES[pkt.message.type] || { color: '#fff' };
-
-      // Packet glow
       ctx.shadowBlur = 15;
-      ctx.shadowColor = mt.color;
-      ctx.fillStyle = mt.color;
+      ctx.shadowColor = color;
+      ctx.fillStyle = color;
       ctx.beginPath();
       ctx.arc(x, y, 4, 0, Math.PI * 2);
       ctx.fill();
       ctx.shadowBlur = 0;
 
-      // Trail
-      ctx.strokeStyle = mt.color;
+      ctx.strokeStyle = color;
       ctx.lineWidth = 2;
       ctx.globalAlpha = 0.3 * (1 - t);
       ctx.beginPath();
@@ -1134,14 +1129,13 @@ class Simulation {
       ctx.stroke();
       ctx.globalAlpha = 1;
 
-      // Add particles on packet
       if (Math.random() < 0.3) {
         this.particles.push({
           x, y,
           vx: (Math.random() - 0.5) * 2,
           vy: (Math.random() - 0.5) * 2,
           life: 1,
-          color: mt.color,
+          color,
           size: 1 + Math.random() * 2
         });
       }
@@ -1155,36 +1149,22 @@ class Simulation {
     for (const agent of this.agents) {
       const x = this.centerX + agent.x;
       const y = this.centerY + agent.y;
-
-      // Check hover
-      const dx = this.mouseX - x;
-      const dy = this.mouseY - y;
-      const dist = Math.hypot(dx, dy);
-      const isHovered = dist < 30;
+      const isHovered = Math.hypot(this.mouseX - x, this.mouseY - y) < 30;
       if (isHovered) this.hoveredAgent = agent;
-
       const isSelected = this.selectedAgent === agent;
       const radius = isSelected ? 28 : (isHovered ? 26 : 22);
+      const processing = agent.state === 'processing';
 
-      // Pulse effect
       agent.pulsePhase += 0.02;
       const pulse = Math.sin(agent.pulsePhase) * 0.3 + 0.7;
 
-      // Outer glow
-      if (agent.state === 'processing') {
-        ctx.shadowBlur = 20 + pulse * 10;
-        ctx.shadowColor = agent.color;
-      } else {
-        ctx.shadowBlur = 10;
-        ctx.shadowColor = agent.color;
-      }
+      ctx.shadowBlur = processing ? 20 + pulse * 10 : 10;
+      ctx.shadowColor = agent.color;
 
-      // Agent circle
       const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
       gradient.addColorStop(0, agent.color + '40');
       gradient.addColorStop(0.6, agent.color + '20');
       gradient.addColorStop(1, agent.color + '10');
-
       ctx.fillStyle = gradient;
       ctx.strokeStyle = agent.color;
       ctx.lineWidth = isSelected ? 3 : 2;
@@ -1194,14 +1174,12 @@ class Simulation {
       ctx.stroke();
       ctx.shadowBlur = 0;
 
-      // Inner dot
       ctx.fillStyle = agent.color;
       ctx.beginPath();
       ctx.arc(x, y, 4, 0, Math.PI * 2);
       ctx.fill();
 
-      // Ring for processing
-      if (agent.state === 'processing') {
+      if (processing) {
         ctx.strokeStyle = agent.color;
         ctx.lineWidth = 2;
         ctx.setLineDash([5, 5]);
@@ -1212,45 +1190,39 @@ class Simulation {
         ctx.setLineDash([]);
       }
 
-      // Label
       ctx.fillStyle = '#fff';
       ctx.font = '600 11px "JetBrains Mono", monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(agent.id.toUpperCase(), x, y + radius + 18);
-
       ctx.font = '400 9px "JetBrains Mono", monospace';
       ctx.fillStyle = 'rgba(255,255,255,0.5)';
       ctx.fillText(agent.role, x, y + radius + 32);
 
-      // Inbox indicator
-      if (agent.inbox.length > 0) {
+      if (agent.inboxSize > 0) {
         ctx.fillStyle = '#ff00aa';
         ctx.beginPath();
         ctx.arc(x + radius - 5, y - radius + 5, 6, 0, Math.PI * 2);
         ctx.fill();
         ctx.fillStyle = '#fff';
         ctx.font = 'bold 9px sans-serif';
-        ctx.fillText(agent.inbox.length.toString(), x + radius - 5, y - radius + 5);
+        ctx.fillText(String(agent.inboxSize), x + radius - 5, y - radius + 5);
       }
     }
   }
 
   drawParticles() {
     const ctx = this.ctx;
-
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];
       p.x += p.vx;
       p.y += p.vy;
       p.life -= 0.02;
       p.size *= 0.98;
-
       if (p.life <= 0) {
         this.particles.splice(i, 1);
         continue;
       }
-
       ctx.globalAlpha = p.life * 0.6;
       ctx.fillStyle = p.color;
       ctx.beginPath();
@@ -1260,6 +1232,8 @@ class Simulation {
     ctx.globalAlpha = 1;
   }
 
+  // Draws the payload of the most recent message as a real tree, using the
+  // engine's Expression.to_dict() structure.
   drawExpressionTree() {
     const canvas = document.getElementById('tree-canvas');
     const ctx = canvas.getContext('2d');
@@ -1267,123 +1241,130 @@ class Simulation {
     const rect = canvas.getBoundingClientRect();
     canvas.width = rect.width * dpr;
     canvas.height = rect.height * dpr;
-    ctx.scale(dpr, dpr);
-
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const w = rect.width;
     const h = rect.height;
-
-    ctx.fillStyle = 'transparent';
     ctx.clearRect(0, 0, w, h);
+    canvas.title = this.treeText;
 
-    // Get latest expression from blackboard
-    const entries = this.blackboard.getAll();
-    const latest = entries[entries.length - 1];
-    if (!latest) {
+    const header = document.getElementById('tree-depth');
+    if (!this.treePayload) {
+      header.textContent = 'Depth: 0';
       ctx.fillStyle = 'rgba(255,255,255,0.3)';
       ctx.font = '12px "JetBrains Mono", monospace';
       ctx.textAlign = 'center';
-      ctx.fillText('No expressions yet...', w/2, h/2);
+      ctx.textBaseline = 'middle';
+      ctx.fillText('No expressions yet...', w / 2, h / 2);
       return;
     }
 
-    document.getElementById('tree-depth').textContent = `Entries: ${entries.length}`;
+    // Lay out: leaves get consecutive x slots, parents centre over children.
+    const nodes = [];
+    let leafCount = 0;
+    let maxDepth = 0;
+    const layout = (node, depth) => {
+      maxDepth = Math.max(maxDepth, depth);
+      if (node.type === 'atom') {
+        const n = { node, depth, slot: leafCount++, children: [] };
+        nodes.push(n);
+        return n;
+      }
+      const children = (node.operands || []).map(c => layout(c, depth + 1));
+      const slot = children.length
+        ? (children[0].slot + children[children.length - 1].slot) / 2
+        : leafCount++;
+      const n = { node, depth, slot, children };
+      nodes.push(n);
+      return n;
+    };
+    layout(this.treePayload, 0);
+    header.textContent = `Depth: ${maxDepth} · ${leafCount} atoms`;
 
-    // Simple text visualization of latest expression
-    ctx.fillStyle = 'var(--cyan)';
-    ctx.font = '11px "JetBrains Mono", monospace';
-    ctx.textAlign = 'left';
+    const padX = 16, padTop = 16, padBottom = 22;
+    const colW = (w - padX * 2) / Math.max(1, leafCount);
+    const rowH = maxDepth ? Math.min(40, (h - padTop - padBottom) / maxDepth) : 0;
+    const pos = n => ({ x: padX + colW * (n.slot + 0.5), y: padTop + rowH * n.depth });
+    const labelLeaves = colW >= 34;
 
-    const text = latest.value;
-    const maxChars = Math.floor(w / 7);
-    const lines = [];
-    for (let i = 0; i < text.length; i += maxChars) {
-      lines.push(text.slice(i, i + maxChars));
-    }
-
-    let y = 20;
-    for (const line of lines.slice(0, 8)) {
-      ctx.fillText(line, 12, y);
-      y += 16;
-    }
-    if (lines.length > 8) {
-      ctx.fillStyle = 'rgba(255,255,255,0.4)';
-      ctx.fillText(`... and ${lines.length - 8} more lines`, 12, y);
-    }
-
-    // Draw mini tree visualization
-    if (y < h - 40) {
-      this.drawMiniTree(ctx, latest.value, w/2, y + 20, w/2 - 20, 30);
-    }
-  }
-
-  drawMiniTree(ctx, text, x, y, width, height) {
-    // Simplified tree visualization
-    const depth = (text.match(/\(/g) || []).length;
-    const maxDepth = Math.min(depth, 5);
-
-    ctx.strokeStyle = 'rgba(0, 240, 255, 0.2)';
+    ctx.strokeStyle = 'rgba(0, 240, 255, 0.25)';
     ctx.lineWidth = 1;
-
-    const nodeY = y;
-    const nodeRadius = 4;
-
-    ctx.fillStyle = 'var(--cyan)';
-    ctx.beginPath();
-    ctx.arc(x, nodeY, nodeRadius, 0, Math.PI * 2);
-    ctx.fill();
-
-    if (maxDepth > 1) {
-      const childCount = Math.min(3, maxDepth);
-      const spacing = width / childCount;
-
-      for (let i = 0; i < childCount; i++) {
-        const childX = x - width/2 + spacing * i + spacing/2;
-        const childY = nodeY + height;
-
+    for (const n of nodes) {
+      const p = pos(n);
+      for (const c of n.children) {
+        const q = pos(c);
         ctx.beginPath();
-        ctx.moveTo(x, nodeY + nodeRadius);
-        ctx.lineTo(childX, childY - nodeRadius);
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(q.x, q.y);
         ctx.stroke();
+      }
+    }
 
-        ctx.fillStyle = `hsl(${180 + i * 40}, 80%, 60%)`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const n of nodes) {
+      const p = pos(n);
+      if (n.node.type === 'atom') {
+        const atom = n.node.atom;
+        const color = CATEGORY_COLORS[atom.category] || '#aaa';
+        ctx.fillStyle = color;
         ctx.beginPath();
-        ctx.arc(childX, childY, nodeRadius, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2);
         ctx.fill();
+        if (labelLeaves) {
+          ctx.font = '9px "JetBrains Mono", monospace';
+          ctx.fillText(truncate(atom.name, Math.max(3, Math.floor(colW / 6))), p.x, p.y + 11);
+        }
+      } else {
+        ctx.fillStyle = '#0a0a12';
+        ctx.strokeStyle = '#00f0ff';
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#00f0ff';
+        ctx.font = '600 10px "JetBrains Mono", monospace';
+        ctx.fillText(n.node.operator || '?', p.x, p.y + 0.5);
       }
     }
   }
 
   drawTooltip() {
     const tooltip = document.getElementById('tooltip');
-    if (this.hoveredAgent) {
-      const agent = this.hoveredAgent;
-      tooltip.classList.add('active');
-      tooltip.style.left = (this.mouseX + 15) + 'px';
-      tooltip.style.top = (this.mouseY + 15) + 'px';
-      tooltip.innerHTML = `
-        <div style="color: ${agent.color}; font-weight: bold; margin-bottom: 4px;">${agent.id.toUpperCase()}</div>
-        <div>Role: ${agent.role}</div>
-        <div>State: <span style="color: ${agent.state === 'processing' ? 'var(--magenta)' : 'var(--green)'}">${agent.state}</span></div>
-        <div>Processed: ${agent.processed} messages</div>
-        <div>Inbox: ${agent.inbox.length} pending</div>
-      `;
-    } else {
+    const agent = this.hoveredAgent;
+    if (!agent) {
       tooltip.classList.remove('active');
+      return;
     }
+    tooltip.classList.add('active');
+    tooltip.style.left = (this.mouseX + 15) + 'px';
+    tooltip.style.top = (this.mouseY + 15) + 'px';
+    const state = agent.state;
+    tooltip.innerHTML = `
+      <div style="color: ${agent.color}; font-weight: bold; margin-bottom: 4px;">${escapeHtml(agent.id.toUpperCase())}</div>
+      <div>Role: ${escapeHtml(agent.role)}</div>
+      <div>State: <span style="color: ${state === 'processing' ? 'var(--magenta)' : 'var(--green)'}">${state}</span></div>
+      <div>Processed: ${agent.processed} messages</div>
+      <div>Inbox: ${agent.inboxSize} pending</div>
+    `;
+  }
+
+  updateRate() {
+    const now = performance.now();
+    while (this.messageTimes.length && now - this.messageTimes[0] > 5000) this.messageTimes.shift();
+    const rate = (this.messageTimes.length / 5).toFixed(1);
+    const el = document.getElementById('message-rate');
+    if (el.textContent !== `${rate} msg/s`) el.textContent = `${rate} msg/s`;
   }
 
   loop() {
     this.drawBackground();
-
     this.ctx.clearRect(0, 0, this.width, this.height);
-
     this.drawConnections();
     this.drawPackets();
     this.drawAgents();
     this.drawParticles();
-    this.drawExpressionTree();
     this.drawTooltip();
-
+    this.updateRate();
     requestAnimationFrame(() => this.loop());
   }
 }
@@ -1392,43 +1373,45 @@ class Simulation {
 // CONTROLS
 // ============================================================================
 
-const simulation = new Simulation();
+const dashboard = new Dashboard();
 
-// Auto-step
-setInterval(() => {
-  simulation.stepSimulation();
-}, 800);
+function showOfflineHelp() {
+  const log = document.getElementById('message-log');
+  log.innerHTML = `
+    <div class="offline-help">
+      <p>No engine connected.</p>
+      <p>Run <code>asis dashboard</code> for the live engine, or load a trace written by <code>asis run</code>.</p>
+      <button class="btn" onclick="document.getElementById('trace-file').click()">Load Trace</button>
+    </div>`;
+}
 
-// Initial task
-setTimeout(() => {
-  simulation.injectTask(C.compose(
-    C.goal('optimize_system'),
-    C.constraint('latency < 100ms'),
-    C.constraint('throughput > 1000rps')
-  ));
-}, 500);
+async function start() {
+  if (location.protocol === 'http:' || location.protocol === 'https:') {
+    await dashboard.connect(new LiveSource());
+    if (dashboard.connected) return;
+  }
+  dashboard.source = null;
+  dashboard.setConnected(false);
+  dashboard.updateModeUI();
+  showOfflineHelp();
+}
 
 function togglePause() {
-  simulation.paused = !simulation.paused;
-  document.getElementById('pause-btn').textContent = simulation.paused ? 'Resume' : 'Pause';
+  dashboard.paused = !dashboard.paused;
+  document.getElementById('pause-btn').textContent = dashboard.paused ? 'Resume' : 'Pause';
+}
+
+function stepOnce() {
+  dashboard.stepOnce();
 }
 
 function resetSimulation() {
-  simulation.agents = AGENT_CONFIGS.map(c => new Agent(c));
-  simulation.blackboard = new Blackboard();
-  simulation.messages = [];
-  simulation.activePackets = [];
-  simulation.step = 0;
-  simulation.converged = false;
-  simulation.convergenceCount = 0;
-  simulation.tasks = 0;
-  simulation.messageLog = [];
-  document.getElementById('message-log').innerHTML = '';
-  document.getElementById('convergence-banner').classList.remove('show');
-  simulation.updateAgentList();
+  dashboard.reset();
 }
 
 function openModal() {
+  if (document.getElementById('inject-btn').disabled) return;
+  document.getElementById('modal-error').textContent = '';
   document.getElementById('modal').classList.add('active');
   document.getElementById('task-input').focus();
 }
@@ -1437,45 +1420,53 @@ function closeModal() {
   document.getElementById('modal').classList.remove('active');
 }
 
-function injectTask() {
-  const input = document.getElementById('task-input').value.trim();
-  if (!input) return;
-
-  // Parse simple expression
-  let expr;
-  if (input.includes('⊗')) {
-    const parts = input.split('⊗').map(s => s.trim());
-    const atoms = parts.map(p => {
-      if (p.includes('<') || p.includes('>')) return C.constraint(p);
-      if (p.includes('goal') || p.includes('optimize') || p.includes('solve')) return C.goal(p);
-      return C.action(p);
-    });
-    expr = C.compose(...atoms);
-  } else {
-    expr = C.goal(input);
+async function injectTask() {
+  const input = document.getElementById('task-input');
+  const text = input.value.trim();
+  if (!text) return;
+  const errorEl = document.getElementById('modal-error');
+  errorEl.textContent = '';
+  try {
+    await dashboard.inject(text);
+    input.value = '';
+    closeModal();
+  } catch (err) {
+    errorEl.textContent = err.message;
   }
-
-  simulation.injectTask(expr);
-  closeModal();
-  document.getElementById('task-input').value = '';
 }
 
-// Keyboard shortcuts
+document.getElementById('trace-file').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    const trace = JSON.parse(await file.text());
+    await dashboard.connect(new ReplaySource(trace, file.name));
+  } catch (err) {
+    alert(`Could not load ${file.name}: ${err.message}`);
+  }
+});
+
 document.addEventListener('keydown', e => {
+  const modalOpen = document.getElementById('modal').classList.contains('active');
   if (e.key === 'Escape') closeModal();
-  if (e.key === ' ' && e.target.tagName !== 'TEXTAREA') {
+  if (e.key === 'Enter' && e.ctrlKey) {
+    e.preventDefault();
+    modalOpen ? injectTask() : openModal();
+  }
+  if (modalOpen) return;
+  if (e.key === ' ') {
     e.preventDefault();
     togglePause();
   }
-  if (e.key === 'Enter' && e.ctrlKey) {
-    openModal();
-  }
+  if (e.key === 'ArrowRight') stepOnce();
 });
 
-// Click outside modal to close
 document.getElementById('modal').addEventListener('click', e => {
   if (e.target.id === 'modal') closeModal();
 });
+
+start();
 </script>
 </body>
 </html>

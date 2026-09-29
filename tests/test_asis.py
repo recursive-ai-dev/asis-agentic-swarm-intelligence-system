@@ -1,10 +1,7 @@
 """Rigorous test suite for ASIS 2.0 — Algebraic Swarm Intelligence System."""
 
 import json
-import time
-import hashlib
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -13,7 +10,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from asis import (
-    ConceptAtom, ConceptCategory, ConceptAtom,
+    ConceptCategory, ConceptAtom,
     Expression, Operator,
     C,
     Rule, RuleEngine,
@@ -426,15 +423,15 @@ class TestRule:
 
     def test_match_consistent_binding(self):
         var_x = ConceptAtom.create("?x", ConceptCategory.ACTION)
-        pattern = Expression.from_atom(var_x)
+        pattern = Expression.from_operator(Operator.GUARD, var_x, var_x)
         rule = Rule("test", pattern, C.action("dummy"))
-        target1 = C.action("hello")
-        target2 = C.action("world")
-        # Same pattern, same var — bindings must be consistent
-        b1 = rule._match(pattern, target1)
-        # Apply pattern again — new match
+        # A variable occurring twice must bind to the same subexpression
+        same = C.guard(C.action("hello"), C.action("hello"))
+        b1 = rule._match(pattern, same)
         assert b1 is not None
-        assert b1["x"] == target1
+        assert b1["x"] == C.action("hello")
+        different = C.guard(C.action("hello"), C.action("world"))
+        assert rule._match(pattern, different) is None
 
     def test_match_structurally_different(self):
         pattern = Expression.from_operator(

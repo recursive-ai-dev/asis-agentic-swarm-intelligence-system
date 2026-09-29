@@ -3,7 +3,8 @@
 > *A deterministic, rule-based multi-agent architecture implementing a Symbolic Algebra of Concepts (SAC), with real-time cyberpunk visualization.*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.md)
-[![Python 3.14+](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
+[![CI](https://github.com/recursive-ai-dev/asis-agentic-swarm-intelligence-system/actions/workflows/ci.yml/badge.svg)](https://github.com/recursive-ai-dev/asis-agentic-swarm-intelligence-system/actions/workflows/ci.yml)
 
 ---
 
@@ -18,14 +19,13 @@ ASIS is built on a **typed lambda calculus variant** where:
 - **Deterministic discrete event simulation** — zero randomness, full traceability
 
 ### 2. Live Cyberpunk Dashboard
-A self-contained, zero-dependency HTML dashboard featuring:
-- **Force-directed agent network** with 6 specialized agent types
-- **Animated message packets** traveling between agents in real-time
-- **Neon glow effects** and particle systems
-- **Live expression tree visualization**
-- **Interactive task injection** — click "Inject Task" and watch the swarm solve it
-- **Convergence detection** with animated banners
-- **Full keyboard shortcuts** (Space to pause, Ctrl+Enter to inject, Escape to close)
+A dashboard driven by the real engine. `asis dashboard` serves it from a small standard-library HTTP server, and every agent, message and expression it shows comes from the Python `SwarmController`. There is no simulation code in the page.
+- **Agent network** with the 6 specialized agents, their inbox depth and processed counts
+- **Animated message packets** for every message the engine routes
+- **Expression tree** of the payload in flight, drawn from `Expression.to_dict()`
+- **Task injection** in ASIS notation, parsed by the engine (`parse_expression`), with parse errors shown inline
+- **Step / pause / reset** controls and **convergence detection** straight from the controller
+- **Trace replay**: opened as a plain file, the page replays any trace written by `asis run`
 
 ### 3. Production-Grade Agent Architecture
 | Agent | Role | Capability |
@@ -40,6 +40,7 @@ A self-contained, zero-dependency HTML dashboard featuring:
 ### 4. Determinism Guarantees
 - Zero non-determinism (no random, async, or threading in core)
 - Content-addressed identifiers via SHA256
+- Logical clock: message timestamps are step numbers, never wall-clock time
 - Canonical ordering via sorted processing and tuple-based bindings
 - Full audit trail via global log, versioned blackboard, and execution snapshots
 - **Same inputs always produce the same trace** — verified by the test suite
@@ -48,26 +49,57 @@ A self-contained, zero-dependency HTML dashboard featuring:
 
 ## Quick Start
 
-### Open the Live Dashboard
-Simply open `asis_dashboard.html` in any modern browser:
+### Install
+ASIS has no runtime dependencies and needs Python 3.10 or newer.
 ```bash
-open asis_dashboard.html     # macOS
-firefox asis_dashboard.html  # Linux
-chrome asis_dashboard.html   # Windows / Linux
+pip install .            # from a checkout
+pip install -e ".[dev]"  # editable install with test/lint tooling
 ```
 
-The dashboard runs a **live simulation** of the swarm in real-time. Watch as:
-1. Tasks are injected into the Orchestrator
-2. Messages pulse through the network as glowing packets
-3. Agents light up when processing
-4. The system converges to a fixed point
+### Open the Live Dashboard
+```bash
+asis dashboard                  # serves http://localhost:8765/ and opens a browser
+asis dashboard --port 0         # pick any free port
+asis dashboard --no-demo        # start with an empty swarm
+asis dashboard --no-browser     # just print the URL
+```
+
+The swarm starts with a demo task and steps every 0.8 s. Watch as:
+1. Tasks enter the Orchestrator from `user`
+2. Messages pulse through the network as the engine routes them
+3. Agents light up in the step they send messages
+4. The swarm reaches a fixed point, and the banner and metrics report it
+
+The server binds to `127.0.0.1` by default. It has no authentication, so only use `--host` to expose it on a network you trust. All browser tabs share one swarm.
+
+**Replaying a trace.** Opened directly as a file (`asis/dashboard.html`), the page has no engine to talk to. Click **Load Trace** and choose a JSON trace from `asis run` to replay it step by step.
+
+### Task Notation
+Tasks typed into the dashboard, or passed to `parse_expression`, use ASIS notation:
+
+| Syntax | Meaning |
+|--------|---------|
+| `a ⊗ b` or `a * b` | compose (binds tighter than union) |
+| `a ⊕ b` or `a \| b` | union |
+| `¬a` or `~a` | negate |
+| `( … )` | grouping |
+| `goal:name`, `entity:name`, … | atom with an explicit category (any `ConceptCategory`, case-insensitive) |
+| `latency < 100ms` | bare text with a comparison (`< > = ≤ ≥ ≠`) is a **constraint** |
+| `optimize_system` | any other bare text is a **goal** |
+
+```python
+from asis import parse_expression
+parse_expression("goal:ship ⊗ (entity:api ⊕ entity:db) ⊗ latency < 50ms")
+```
 
 ### Run the Engine
 ```bash
-python asis.py
+asis run                              # or just `asis`, or `python -m asis`
+asis run --output run.json --max-steps 100
+asis run --no-trace                   # print the summary only
 ```
 
-This executes a full symbolic simulation and exports a JSON trace to `asis_trace.json`.
+This runs a demo task through the swarm and exports a JSON trace (default `asis_trace.json`). Exit status is `0` on convergence, `2` if the step budget ran out first, and `1` if the trace could not be written.
 
 ### Programmatic Usage
 ```python
@@ -100,7 +132,7 @@ The project includes a comprehensive test suite using `pytest`.
 
 ### Setup
 ```bash
-pip install pytest
+pip install -e ".[dev]"
 ```
 
 ### Run Tests
@@ -109,8 +141,10 @@ pip install pytest
 pytest tests/ -v
 
 # Run with coverage report
-pip install pytest-cov
 pytest tests/ --cov=asis --cov-report=term-missing
+
+# Lint
+ruff check .
 
 # Run specific test class
 pytest tests/ -v -k TestExpression
@@ -130,6 +164,10 @@ The test suite covers:
 | Agents | Per-agent classes | Each agent's message handling, blackboard interaction |
 | Swarm | `TestSwarmController` | Task injection, stepping, convergence, trace export |
 | Integration | `TestIntegration` | End-to-end pipelines, determinism, multi-task scenarios |
+| Algebra | `test_math_properties.py` | Associativity, identity, absorption, idempotence, double negation |
+| Stress | `test_stress.py` | Deep nesting, bulk idempotence and absorption, multi-task injection |
+| Regressions | `test_regressions.py` | Byte-identical traces, metadata identity, failure paths, CLI |
+| Dashboard | `test_dashboard.py` | Task notation parser, frame API, HTTP server endpoints and input validation |
 
 ---
 
@@ -177,7 +215,7 @@ atom.name           # str
 atom.category       # ConceptCategory
 atom.domain         # str
 atom.metadata       # Dict[str, str]
-atom.serialize()    # "ATOM(name:CATEGORY:domain)"
+atom.serialize()    # "ATOM(name:CATEGORY:domain)", or "ATOM(name:CATEGORY:domain{k=v,...})" with metadata
 atom.matches_pattern(pattern)  # bool
 atom.with_domain(new_domain)   # ConceptAtom
 ```
@@ -235,6 +273,9 @@ engine.evaluate(expression)    # Expression
 swarm = create_default_swarm()
 swarm.inject_task(expression)                    # str (task_id)
 swarm.step()                                      # int (messages processed)
+swarm.converged                                   # bool (3 consecutive idle steps)
+swarm.snapshot()                                  # Dict (current frame)
+swarm.latest_snapshot                             # Optional[Dict] (frame from last step)
 swarm.run_until_convergence(max_steps=50)         # Dict
 swarm.export_trace()                              # Dict
 swarm.save_trace("trace.json")                    # None
@@ -246,11 +287,16 @@ swarm.save_trace("trace.json")                    # None
 
 | File | Description |
 |------|-------------|
-| `asis.py` | Production-grade ASIS engine with rule engine, full agent hierarchy, and trace export |
-| `asis_dashboard.html` | Self-contained interactive cyberpunk visualization (zero dependencies) |
-| `asis_trace.json` | Sample execution trace from a 3-task simulation |
+| `asis/core.py` | Engine: algebra, parser, rule engine, agent hierarchy, swarm controller, trace export |
+| `asis/cli.py` | `asis run` and `asis dashboard` commands |
+| `asis/server.py` | Dashboard HTTP server and JSON API (standard library only) |
+| `asis/dashboard.html` | Dashboard client: renders engine frames live or from a trace (loads web fonts from Google Fonts) |
+| `asis_trace.json` | Sample trace produced by `asis run` |
+| `pyproject.toml` | Packaging metadata and tool configuration |
+| `build.sh` | Builds a standalone binary with PyInstaller |
+| `CHANGELOG.md` | Release notes |
 | `LICENSE.md` | MIT License |
-| `tests/test_asis.py` | Comprehensive test suite (100+ tests across all modules) |
+| `tests/` | Test suite (190+ tests) |
 
 ---
 
@@ -258,10 +304,11 @@ swarm.save_trace("trace.json")                    # None
 
 | Key | Action |
 |-----|--------|
-| `Space` | Pause / Resume simulation |
-| `Ctrl + Enter` | Open task injection modal |
-| `Escape` | Close modal |
-| `Click agent` | Select agent (see details) |
+| `Space` | Pause / Resume stepping |
+| `→` | Advance one step |
+| `Ctrl + Enter` | Open the task injection dialog, or submit it when open |
+| `Escape` | Close the dialog |
+| `Click agent` | Select agent (hover for details) |
 
 ---
 
@@ -273,7 +320,10 @@ swarm.save_trace("trace.json")                    # None
 - **Absorption**: `_zero` element absorbs in COMPOSE
 - **Idempotence**: A ⊕ A = A
 - **Double Negation**: ¬¬A = A
-- **Determinism**: Zero randomness in core execution; same inputs → same trace
+- **Determinism**: Zero randomness in core execution; same inputs → byte-identical trace
+
+### Limits
+Expressions are processed recursively, so with Python's default recursion limit, trees nested deeper than roughly 800–900 levels raise `RecursionError`. Width is not limited in the same way.
 
 ---
 

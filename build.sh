@@ -1,16 +1,19 @@
 #!/bin/bash
-set -e
+# Build a standalone `asis` executable (engine, CLI and dashboard) with PyInstaller.
+set -euo pipefail
 
-echo "Building ASIS 2.0 Desktop Deployment Binary..."
+cd "$(dirname "$0")"
+echo "Building ASIS standalone binary..."
 
-# Ensure pyinstaller is installed
-if ! command -v pyinstaller &> /dev/null
-then
-    echo "pyinstaller could not be found, installing..."
-    pip install pyinstaller
+if ! python -m PyInstaller --version &> /dev/null; then
+    echo "PyInstaller not found, installing..."
+    python -m pip install pyinstaller
 fi
 
-# Run the build
-pyinstaller --onefile --clean asis.py
+python -m PyInstaller --onefile --clean --noconfirm \
+    --name asis \
+    --paths . \
+    --add-data "asis/dashboard.html:asis" \
+    asis/__main__.py
 
 echo "Build complete. Binary is located in dist/asis"

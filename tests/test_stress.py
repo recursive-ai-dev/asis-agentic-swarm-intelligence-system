@@ -1,5 +1,4 @@
-import pytest
-from asis import C, Expression, create_default_swarm
+from asis import C, create_default_swarm
 
 def test_stress_deep_nesting():
     """Test flattening performance with deeply nested structures (e.g., 2000 nested composes)."""
