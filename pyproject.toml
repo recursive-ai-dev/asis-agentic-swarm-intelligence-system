@@ -5,13 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "asis-swarm"
 dynamic = ["version"]
-description = "Algebraic Swarm Intelligence System: a deterministic multi-agent engine built on a symbolic algebra of concepts."
+description = "A deterministic team of single-purpose agents that plans against a knowledge base: goals and constraints in, the cheapest satisfying plan (or a precise account of why none exists) out."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE.md"]
 requires-python = ">=3.10"
 dependencies = []
-keywords = ["multi-agent", "swarm", "symbolic", "rule-engine", "simulation"]
+keywords = ["multi-agent", "swarm", "planning", "constraint-satisfaction", "symbolic", "rule-engine"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -35,7 +35,7 @@ Repository = "https://github.com/recursive-ai-dev/asis-agentic-swarm-intelligenc
 packages = ["asis"]
 
 [tool.setuptools.package-data]
-asis = ["dashboard.html"]
+asis = ["dashboard.html", "domains/*.json"]
 
 [tool.setuptools.dynamic]
 version = { attr = "asis.core.__version__" }

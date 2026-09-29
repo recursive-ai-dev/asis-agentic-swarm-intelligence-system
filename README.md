@@ -1,49 +1,87 @@
-# ASIS 2.0 — Algebraic Swarm Intelligence System
+# ASIS — Algebraic Swarm Intelligence System
 
-> *A deterministic, rule-based multi-agent architecture implementing a Symbolic Algebra of Concepts (SAC), with real-time cyberpunk visualization.*
+> *A deterministic team of single-purpose agents that plans against a knowledge base. Give it goals and constraints; get back the cheapest plan that meets them, or a precise account of why none exists.*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.md)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![CI](https://github.com/recursive-ai-dev/asis-agentic-swarm-intelligence-system/actions/workflows/ci.yml/badge.svg)](https://github.com/recursive-ai-dev/asis-agentic-swarm-intelligence-system/actions/workflows/ci.yml)
 
+```console
+$ asis solve "optimize_system ⊗ latency < 100ms ⊗ throughput > 1000rps"
+Status: SOLVED
+Why it stopped: constraints met and no cheaper variant found
+
+Plan:
+  - add_cache — put a read-through cache in front of the database (+40 usd)
+  - async_queue — move slow work onto a background queue (+25 usd)
+  - upgrade_instance — move to a larger instance class (+90 usd)
+
+Predicted metrics:
+  cost: 255 usd (was 100 usd)
+  error_rate: 2.2% (was 2%)
+  latency: 67.2 ms (was 180 ms)  [✓ latency < 100 ms]
+  throughput: 1050 rps (was 400 rps)  [✓ throughput > 1000 rps]
+
+How the team got there:
+  1. initial plan: nothing is required up front [planner]
+  2. add add_cache: latency 180 → 108, throughput 400 → 500 [repairer]
+  3. add upgrade_instance: latency 108 → 86.4, throughput 500 → 750 [repairer]
+  4. add async_queue: latency 86.4 → 67.2, throughput 750 → 1050 [repairer]
+```
+
 ---
 
-## What Makes This Remarkable
+## The idea: a body, not a boss
 
-### 1. Formal Algebraic Foundation
-ASIS is built on a **typed lambda calculus variant** where:
-- **ConceptAtoms** are typed atomic elements (Entity, Action, Goal, Constraint, etc.)
-- **10 algebraic operators** form a closed algebra over expression trees (⊗, ⊕, ¬, π, ι, β, ρ, τ, γ, μ)
-- **Immutable DAG-based expressions** with content-addressed identifiers
-- **Forward-chaining rule engine** with unification and pattern matching
-- **Deterministic discrete event simulation** — zero randomness, full traceability
+A body has no central controller telling each cell what to do. It has many single-purpose cells and organs that react to the signals they have receptors for, share one genome, keep themselves in balance through feedback loops, defend against what doesn't belong, remember what worked, and keep working when a part is lost.
 
-### 2. Live Cyberpunk Dashboard
-A dashboard driven by the real engine. `asis dashboard` serves it from a small standard-library HTTP server, and every agent, message and expression it shows comes from the Python `SwarmController`. There is no simulation code in the page.
-- **Agent network** with the 6 specialized agents, their inbox depth and processed counts
-- **Animated message packets** for every message the engine routes
-- **Expression tree** of the payload in flight, drawn from `Expression.to_dict()`
-- **Task injection** in ASIS notation, parsed by the engine (`parse_expression`), with parse errors shown inline
-- **Step / pause / reset** controls and **convergence detection** straight from the controller
-- **Trace replay**: opened as a plain file, the page replays any trace written by `asis run`
+ASIS is built the same way:
 
-### 3. Production-Grade Agent Architecture
-| Agent | Role | Capability |
-|-------|------|------------|
-| **Orchestrator** | Coordination | Task decomposition, routing, result aggregation |
-| **Analyst** | Analysis | Requirement analysis, constraint identification, feasibility assessment |
-| **Planner** | Planning | Multi-step plan generation with validation gates |
-| **Executor** | Execution | Step-by-step execution with logging |
-| **Validator** | Validation | Success/failure detection, feedback loops |
-| **Synthesizer** | Synthesis | Final output assembly and delivery |
+| In a body | In ASIS |
+|---|---|
+| Cells respond to hormones they have receptors for | Specialists declare **receptors** for signal kinds. Nobody addresses anybody; the substrate delivers each signal to every tissue that can hear it |
+| One genome in every cell | Every specialist reads the same **knowledge base**, but each only does its own job |
+| Extracellular medium | A shared **blackboard** where specialists leave specs, proposals and verdicts for each other |
+| Metabolism | Each task has an **energy budget**; every piece of work costs energy |
+| Homeostasis | The **regulator** raises search effort when a task stalls and calls for a decision when there is nothing left to try or energy runs out |
+| Negative feedback | The repairer stands down once any plan satisfies the task; the optimizer takes over |
+| Immune system | The **immune** specialist rejects malformed or contradictory tasks and quarantines invalid or already-seen plans |
+| Immunological memory | **Memory** recognises a problem it has solved before, even when it is worded differently, and re-proposes the answer |
+| Redundancy | Several cells can form one tissue (two estimators by default); the substrate spreads work between them |
+| Graceful degradation | Remove any specialist and the organism still answers honestly, or visibly stalls if it was a vital organ ([measured below](#lesions)) |
 
-### 4. Determinism Guarantees
-- Zero non-determinism (no random, async, or threading in core)
-- Content-addressed identifiers via SHA256
-- Logical clock: message timestamps are step numbers, never wall-clock time
-- Canonical ordering via sorted processing and tuple-based bindings
-- Full audit trail via global log, versioned blackboard, and execution snapshots
-- **Same inputs always produce the same trace** — verified by the test suite
+### The team
+
+| Specialist | Receptors | Job |
+|---|---|---|
+| **intake** | `TASK` | Reads a task expression into goals, required/forbidden items and constraints |
+| **immune** | `OPENED`, `PROPOSAL` | Screens tasks (unknown names with "did you mean", unit mismatches, contradictions, impossible bounds) and plans (conflicts, missing prerequisites, forbidden actions, repeats) |
+| **decomposer** | `CLEARED` | Expands goals into required capabilities with the rule engine over the goal hierarchy |
+| **memory** | `REQUIREMENTS`, `RESULT` | Remembers solved problems by meaning and re-proposes the known answer |
+| **planner** | `REQUIREMENTS` | Drafts the cheapest plan that provides every required capability |
+| **estimator** ×2 | `PLAN` | Predicts every metric for a plan |
+| **checker** | `ESTIMATE` | Compares predictions against constraints; records a verdict |
+| **repairer** | `VERDICT` (violated), `ESCALATE` | Proposes changes that shrink violations: additions at effort 1; removals, swaps and a wider beam at effort 2 |
+| **optimizer** | `VERDICT` (satisfied) | Looks for a cheaper plan that still satisfies everything: single moves, then pairs |
+| **regulator** | `QUIESCENT`, `EXHAUSTED` | Homeostasis: escalate effort or call for a decision |
+| **judge** | `SETTLE`, `REJECTED` | Chooses the answer: the cheapest satisfying plan, else the closest miss |
+| **explainer** | `RESULT` | Writes the report: plan, numbers, and how the team got there |
+
+### How a task flows
+
+```
+TASK ─▶ intake ─▶ immune ─▶ decomposer ─▶ planner ──┐   memory ──┐
+                                                    ▼            ▼
+         ┌──────────────── PROPOSAL ─▶ immune ─▶ estimator ─▶ checker
+         │                                                     │
+         ├── repairer ◀─ violated ─────────────────────────────┤
+         └── optimizer ◀─ satisfied ───────────────────────────┘
+
+substrate senses QUIESCENT / EXHAUSTED ─▶ regulator ─▶ ESCALATE ─▶ repairer
+                                                    └▶ SETTLE ─▶ judge ─▶ RESULT ─▶ explainer, memory
+```
+
+The substrate only does physiology: it delivers signals, charges energy, and notices when a task has nothing in flight or has run out of energy. Every decision is made by a specialist.
 
 ---
 
@@ -56,281 +94,218 @@ pip install .            # from a checkout
 pip install -e ".[dev]"  # editable install with test/lint tooling
 ```
 
-### Open the Live Dashboard
+### Solve a task
 ```bash
-asis dashboard                  # serves http://localhost:8765/ and opens a browser
-asis dashboard --port 0         # pick any free port
-asis dashboard --no-demo        # start with an empty swarm
-asis dashboard --no-browser     # just print the URL
+asis solve "optimize_system ⊗ latency < 100ms ⊗ throughput > 1000rps"
+asis solve "high_availability ⊗ uptime >= 99.9% ⊗ cost < 400"
+asis solve "(scale_out ⊕ high_availability) ⊗ throughput > 1500rps ⊗ ¬goal:caching ⊗ cost < 500"
+asis solve "cut_costs ⊗ cost < 80 ⊗ latency < 200ms" --json
+asis solve "launch_feature" --trace launch.json      # also save a full trace
+asis solve "..." --kb my_domain.json --budget 800   # your own knowledge base
 ```
 
-The swarm starts with a demo task and steps every 0.8 s. Watch as:
-1. Tasks enter the Orchestrator from `user`
-2. Messages pulse through the network as the engine routes them
-3. Agents light up in the step they send messages
-4. The swarm reaches a fixed point, and the banner and metrics report it
+Exit status: `0` solved, `2` not solved (the closest plan is reported), `3` rejected before planning, `1` usage or input error.
 
-The server binds to `127.0.0.1` by default. It has no authentication, so only use `--host` to expose it on a network you trust. All browser tabs share one swarm.
+### See what a knowledge base offers
+```bash
+asis kb           # goals, capabilities, metrics (with aliases) and actions
+asis kb --json
+```
 
-**Replaying a trace.** Opened directly as a file (`asis/dashboard.html`), the page has no engine to talk to. Click **Load Trace** and choose a JSON trace from `asis run` to replay it step by step.
+### Watch the team work
+```bash
+asis dashboard                  # serves http://localhost:8765/ and opens a browser
+asis dashboard --kb my.json     # with your own knowledge base
+asis dashboard --port 0         # any free port
+asis dashboard --no-demo        # start without the demo task
+```
 
-### Task Notation
-Tasks typed into the dashboard, or passed to `parse_expression`, use ASIS notation:
+The dashboard is driven by the real engine. It shows the specialists on a ring with the substrate at the centre, every signal as it is delivered, each task's status, remaining energy and answer (click a task for its full report), and the expression tree of the payload in flight. The task dialog offers the knowledge base's goals and metrics as one-click chips.
+
+The server binds to `127.0.0.1` by default and has no authentication; only use `--host` on a network you trust. All browser tabs share one organism. Opened directly as a file (`asis/dashboard.html`), the page replays any trace from `asis run` or `asis solve --trace` (**Load Trace**).
+
+---
+
+## Task Notation
 
 | Syntax | Meaning |
-|--------|---------|
-| `a ⊗ b` or `a * b` | compose (binds tighter than union) |
-| `a ⊕ b` or `a \| b` | union |
-| `¬a` or `~a` | negate |
-| `( … )` | grouping |
-| `goal:name`, `entity:name`, … | atom with an explicit category (any `ConceptCategory`, case-insensitive) |
-| `latency < 100ms` | bare text with a comparison (`< > = ≤ ≥ ≠`) is a **constraint** |
-| `optimize_system` | any other bare text is a **goal** |
+|---|---|
+| `optimize_system`, `goal:launch_feature` | a goal from the knowledge base, or a capability (bare text is a goal) |
+| `latency < 100ms`, `uptime >= 99.9%` | a constraint (any text with `< <= > >= = != ≤ ≥ ≠`). Units convert: `p99 < 0.1s` means `latency < 100 ms` |
+| `a ⊗ b` or `a * b` | all of these |
+| `(a ⊕ b)` or `(a \| b)` | either goal. `⊗` binds tighter than `⊕`, so group alternatives in parentheses |
+| `action:add_cdn` | this action must be in the plan |
+| `¬action:x`, `¬goal:caching` | never use this action / anything providing this capability |
+| `¬(latency < 150ms)` | the negated constraint (`latency >= 150 ms`) |
 
 ```python
 from asis import parse_expression
 parse_expression("goal:ship ⊗ (entity:api ⊕ entity:db) ⊗ latency < 50ms")
 ```
 
-### Run the Engine
-```bash
-asis run                              # or just `asis`, or `python -m asis`
-asis run --output run.json --max-steps 100
-asis run --no-trace                   # print the summary only
+---
+
+## Writing a Knowledge Base
+
+A knowledge base is a JSON file with three sections. See [`asis/domains/web_service.json`](asis/domains/web_service.json) for a complete example.
+
+```json
+{
+  "name": "kitchen",
+  "metrics": {
+    "prep_time": {"unit": "min", "baseline": 60, "min": 0, "aliases": ["time"]},
+    "cost": {"unit": "usd", "baseline": 0}
+  },
+  "actions": {
+    "mise_en_place": {"cost": 5, "effects": {"prep_time": {"add": -15}}},
+    "sous_chef": {"cost": 40, "effects": {"prep_time": {"factor": 0.5}}, "provides": ["help"]},
+    "second_oven": {"cost": 30, "requires": ["sous_chef"], "max_uses": 2,
+                    "effects": {"prep_time": {"add": -5}}}
+  },
+  "goals": {
+    "dinner_party": {"needs": ["help"]}
+  }
+}
 ```
 
-This runs a demo task through the swarm and exports a JSON trace (default `asis_trace.json`). Exit status is `0` on convergence, `2` if the step budget ran out first, and `1` if the trace could not be written.
+- **Metrics** have a unit, a baseline, optional `min`/`max` bounds and aliases. A `cost` metric always exists; plans are ranked by it.
+- **Actions** have a cost, `effects` on metrics (`add` and/or `factor`), the capabilities they `provide`, prerequisite actions (`requires`), mutual exclusions (`conflicts`) and `max_uses`. Negative costs are savings.
+- **Goals** `need` capabilities and/or other goals.
+- A plan's metrics are `(baseline + Σ add) × Π factor`, clamped to the metric's bounds.
 
-### Programmatic Usage
-```python
-from asis import *
-
-# Create swarm
-swarm = create_default_swarm()
-
-# Inject a complex algebraic task
-task = C.compose(
-    C.goal("optimize_system"),
-    C.constraint("latency < 100ms"),
-    C.constraint("throughput > 1000rps")
-)
-swarm.inject_task(task)
-
-# Run until algebraic fixed point (convergence)
-result = swarm.run_until_convergence(max_steps=50)
-print(f"Converged in {result['steps_executed']} steps")
-
-# Export full trace for visualization
-swarm.save_trace("my_trace.json")
-```
+The loader validates everything: unknown references, requires-and-conflicts pairs, non-positive factors, goal cycles and impossible bounds are reported together.
 
 ---
 
-## Testing
+## Python API
 
-The project includes a comprehensive test suite using `pytest`.
+```python
+from asis import KnowledgeBase, create_default_swarm, solve
 
-### Setup
-```bash
-pip install -e ".[dev]"
+result = solve("optimize_system ⊗ latency < 100ms ⊗ throughput > 1000rps")
+result.status        # "solved" | "unsolved" | "rejected" | "stalled" | "open"
+result.plan          # {"add_cache": 1, "async_queue": 1, "upgrade_instance": 1}
+result.metrics       # predicted metrics for the chosen plan
+result.cost, result.violations, result.reason, result.report
+result.energy_used, result.budget
+
+# One organism, many tasks, shared memory:
+swarm = create_default_swarm(KnowledgeBase.load("kitchen.json"), energy_budget=400)
+a = swarm.submit("dinner_party ⊗ prep_time < 20min")
+swarm.run()
+b = swarm.submit("dinner_party ⊗ time < 1200s")    # same problem, different words
+swarm.run()                                        # or swarm.step() one step at a time
+swarm.result(b).report                             # "... recalled: the same problem was solved in task …"
+swarm.save_trace("trace.json")
 ```
 
-### Run Tests
-```bash
-# Run all tests
-pytest tests/ -v
+### Adding a specialist
+Specialists join through receptors. Nothing else needs to change:
 
-# Run with coverage report
-pytest tests/ --cov=asis --cov-report=term-missing
+```python
+from asis import Kind, Receptor, Specialist
 
-# Lint
-ruff check .
+class Auditor(Specialist):
+    tissue = "auditor"
+    receptors = (Receptor(Kind.RESULT),)
+    description = "Keeps a record of every answer."
 
-# Run specific test class
-pytest tests/ -v -k TestExpression
-pytest tests/ -v -k TestSwarmController
+    def handle(self, signal, ctx):
+        print(signal.task_id, signal.data["status"])
+        return []          # or signals to emit, via self.emit(kind, task_id, payload, **data)
+
+swarm = create_default_swarm()
+swarm.register_agent(Auditor())
 ```
 
-### Test Coverage
-The test suite covers:
+`swarm.remove_agent(agent_id)` takes one out.
 
-| Module | Test Class | Tests |
-|--------|-----------|-------|
-| ConceptAtom | `TestConceptAtom` | Creation, serialization, matching, immutability, hashing |
-| Expression | `TestExpression` | Construction, depth, atoms, substitution, serialization, operators |
-| C Factory | `TestCFactory` | All factory methods, operators, validation |
-| Rule Engine | `TestRule`, `TestRuleEngine` | Pattern matching, variable binding, normalization, chaining |
-| Communication | `TestAlgebraicMessage`, `TestBlackboard` | Message creation, routing, blackboard I/O, history |
-| Agents | Per-agent classes | Each agent's message handling, blackboard interaction |
-| Swarm | `TestSwarmController` | Task injection, stepping, convergence, trace export |
-| Integration | `TestIntegration` | End-to-end pipelines, determinism, multi-task scenarios |
-| Algebra | `test_math_properties.py` | Associativity, identity, absorption, idempotence, double negation |
-| Stress | `test_stress.py` | Deep nesting, bulk idempotence and absorption, multi-task injection |
-| Regressions | `test_regressions.py` | Byte-identical traces, metadata identity, failure paths, CLI |
-| Dashboard | `test_dashboard.py` | Task notation parser, frame API, HTTP server endpoints and input validation |
+---
+
+## Guarantees
+
+- **Deterministic.** No randomness, threads or wall-clock time in the engine. Identical inputs produce byte-identical traces (tested).
+- **Optimal on the tested cases.** For constraint-only tasks in the bundled domain, the team's answer matches an exhaustive search (tested for several tasks). In general the search is heuristic, so a cheaper plan may exist when it is only reachable through several cost-increasing steps.
+- **Always answers.** Every task ends solved, unsolved (with the closest plan and what it misses), or rejected (with every reason), unless a vital specialist is missing.
+- **Bounded.** Each task has an energy budget (400 by default). When it is spent, the task is still judged on what was found.
+- **Isolated.** Many tasks in one organism reach the same answers as each task alone (tested).
+
+### Lesions
+What happens when one specialist is removed (`tests/test_team.py::TestLesions`):
+
+| Removed | Effect |
+|---|---|
+| an estimator, memory, explainer | Same answer (without the explainer there is no report; without memory, repeats cost more energy) |
+| optimizer | Still solves, but pays more (`high_availability ⊗ uptime >= 99.9% ⊗ cost < 400`: 255 instead of 215) |
+| repairer | Only tasks the first draft already satisfies are solved; the rest get an honest "unsolved" |
+| intake, immune, decomposer, planner, checker | "unsolved: no plan was ever evaluated" — the organism still answers |
+| regulator or judge | **Vital organs:** tasks stall. A second regulator cell prevents it |
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    ASIS 2.0 ARCHITECTURE                     │
-├─────────────────────────────────────────────────────────────┤
-│  LAYER 5: Swarm Controller    │ Step-based execution       │
-│  LAYER 4: Agent Hierarchy     │ 6 specialized roles         │
-│  LAYER 3: Communication       │ AlgebraicMessage, Channels  │
-│  LAYER 2: Rule Engine         │ Forward-chaining + unification│
-│  LAYER 1: Algebraic Core      │ SAC with 10 operators       │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│  asis/specialists.py  The team: 12 single-purpose specialists      │
+│  asis/organism.py     Signals, receptors, blackboard, substrate    │
+│  asis/knowledge.py    Metrics, actions, goals, constraints, units  │
+│  asis/core.py         Algebra, ASIS notation parser, rule engine   │
+│  asis/server.py       Dashboard HTTP server (standard library)     │
+│  asis/cli.py          asis run | solve | kb | dashboard            │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-### Algebraic Operators
-| Symbol | Name | Semantics |
-|--------|------|-----------|
-| ⊗ | COMPOSE | Sequential composition |
-| ⊕ | UNION | Parallel combination |
-| ¬ | NEGATE | Logical negation |
-| π | PROJECT | Extract / select |
-| ι | INJECT | Embed into space |
-| β | BIND | Parameterize |
-| ρ | REDUCE | Aggregate |
-| τ | TRANSFORM | Cross-domain map |
-| γ | GUARD | Conditional |
-| μ | FIXPOINT | Iterate to convergence |
-
-### Message Flow
-```
-User → Orchestrator → [Analyst | Planner → Executor → Validator → Synthesizer] → Orchestrator → ✓
-```
+Every signal carries an **expression**: a plan is the `⊗` of its action atoms, a verdict is `satisfied ⊗ plan`, an estimate is `plan ⊗ (⊕ metric atoms)`. Expressions are immutable, canonicalized trees (associativity is flattened, `A ⊕ A = A`, `¬¬A = A`, `_identity` and `_zero` for `⊗`), which keeps traces reproducible and lets the dashboard draw what the specialists are passing around.
 
 ---
 
-## API Reference
+## Testing
 
-### ConceptAtom
-```python
-atom = ConceptAtom.create(name, category, domain="general", metadata=None)
-atom.name           # str
-atom.category       # ConceptCategory
-atom.domain         # str
-atom.metadata       # Dict[str, str]
-atom.serialize()    # "ATOM(name:CATEGORY:domain)", or "ATOM(name:CATEGORY:domain{k=v,...})" with metadata
-atom.matches_pattern(pattern)  # bool
-atom.with_domain(new_domain)   # ConceptAtom
+```bash
+pip install -e ".[dev]"
+pytest
+pytest --cov=asis --cov-report=term-missing
+ruff check .
 ```
 
-### Expression
-```python
-# Construction
-e = Expression.from_atom(atom)
-e = Expression.from_operator(op, *operands, bindings=None)
-
-# Properties
-e.is_leaf    # bool
-e.atom       # Optional[ConceptAtom]
-e.depth      # int (cached)
-e.atoms      # FrozenSet[ConceptAtom] (cached)
-e.operator   # Optional[Operator]
-e.operands   # Tuple[...]
-e.bindings   # Dict[str, Any]
-
-# Operations
-e.substitute(old, new)  # Expression
-e.serialize()            # str (cached)
-e.to_dict()              # dict
-e @ other  # COMPOSE     (matmul)
-e | other  # UNION       (or)
-~e         # NEGATE      (invert)
-```
-
-### C Factory
-```python
-C.entity(name, domain="general", metadata=None)
-C.action(name, ...)
-C.property(name, ...)
-C.constraint(name, ...)
-C.goal(name, ...)
-C.state(name, ...)
-C.compose(*exprs)       # ⊗
-C.union(*exprs)          # ⊕
-C.guard(condition, body) # γ
-```
-
-### Rule Engine
-```python
-rule = Rule(name, pattern, replacement, condition=None)
-rule.apply(expression)   # Optional[Expression]
-
-engine = RuleEngine()
-engine.add_rule(rule)
-engine.normalize(expression)  # Expression
-engine.evaluate(expression)    # Expression
-```
-
-### SwarmController
-```python
-swarm = create_default_swarm()
-swarm.inject_task(expression)                    # str (task_id)
-swarm.step()                                      # int (messages processed)
-swarm.converged                                   # bool (3 consecutive idle steps)
-swarm.snapshot()                                  # Dict (current frame)
-swarm.latest_snapshot                             # Optional[Dict] (frame from last step)
-swarm.run_until_convergence(max_steps=50)         # Dict
-swarm.export_trace()                              # Dict
-swarm.save_trace("trace.json")                    # None
-```
+| Suite | Covers |
+|---|---|
+| `test_core.py`, `test_math_properties.py` | Algebra, factory, rule engine (including subterm rewriting) |
+| `test_knowledge.py` | Loading and validation, constraints and units, estimation, plans |
+| `test_team.py` | Outcomes checked against exhaustive search, rejections, reports, substrate behaviour, memory, lesions |
+| `test_dashboard.py` | Notation parser, frame API, HTTP endpoints and input validation |
+| `test_regressions.py` | Past defects and the CLI contract (exit codes, JSON, custom knowledge bases) |
+| `test_stress.py` | Deep and wide expressions; 60 concurrent tasks in one organism |
 
 ---
 
 ## Files
 
 | File | Description |
-|------|-------------|
-| `asis/core.py` | Engine: algebra, parser, rule engine, agent hierarchy, swarm controller, trace export |
-| `asis/cli.py` | `asis run` and `asis dashboard` commands |
-| `asis/server.py` | Dashboard HTTP server and JSON API (standard library only) |
+|---|---|
+| `asis/` | The package (see [Architecture](#architecture)); `asis/domains/web_service.json` is the bundled example domain |
 | `asis/dashboard.html` | Dashboard client: renders engine frames live or from a trace (loads web fonts from Google Fonts) |
 | `asis_trace.json` | Sample trace produced by `asis run` |
-| `pyproject.toml` | Packaging metadata and tool configuration |
 | `build.sh` | Builds a standalone binary with PyInstaller |
 | `CHANGELOG.md` | Release notes |
-| `LICENSE.md` | MIT License |
-| `tests/` | Test suite (190+ tests) |
-
----
 
 ## Keyboard Shortcuts (Dashboard)
 
 | Key | Action |
-|-----|--------|
-| `Space` | Pause / Resume stepping |
+|---|---|
+| `Space` | Pause / resume stepping |
 | `→` | Advance one step |
-| `Ctrl + Enter` | Open the task injection dialog, or submit it when open |
-| `Escape` | Close the dialog |
-| `Click agent` | Select agent (hover for details) |
+| `Ctrl + Enter` | Open the task dialog, or submit it when open |
+| `Escape` | Close a dialog |
+| Click a task | Show its report |
 
----
+## Limits
 
-## Mathematical Properties
-
-- **Closed Algebra**: All operators produce valid Expression trees
-- **Associativity**: COMPOSE and UNION are associative (flattened automatically)
-- **Identity**: `_identity` element for COMPOSE
-- **Absorption**: `_zero` element absorbs in COMPOSE
-- **Idempotence**: A ⊕ A = A
-- **Double Negation**: ¬¬A = A
-- **Determinism**: Zero randomness in core execution; same inputs → byte-identical trace
-
-### Limits
-Expressions are processed recursively, so with Python's default recursion limit, trees nested deeper than roughly 800–900 levels raise `RecursionError`. Width is not limited in the same way.
-
----
+- The effect model is additive-then-multiplicative per metric; interactions between actions beyond `requires` and `conflicts` are not modelled.
+- Search is heuristic (greedy repair with escalation, local cost optimisation). It is fast and explainable, not exhaustive.
+- Expressions are processed recursively; trees nested deeper than roughly 800–900 levels raise `RecursionError`.
 
 ## License
 
-This project is licensed under the MIT License — see [LICENSE.md](LICENSE.md).
-
----
-
-*Built on the Symbolic Algebra of Concepts — where agents communicate through expression trees, not natural language.*
+MIT — see [LICENSE.md](LICENSE.md).

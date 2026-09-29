@@ -1,0 +1,120 @@
+{
+  "name": "web_service",
+  "description": "Tuning and operating a web service: performance, reliability, delivery and spend.",
+  "metrics": {
+    "latency": {
+      "unit": "ms", "baseline": 180, "min": 1, "aliases": ["p99", "response_time"],
+      "description": "p99 response time"
+    },
+    "throughput": {
+      "unit": "rps", "baseline": 400, "min": 0, "aliases": ["rps", "capacity"],
+      "description": "sustainable requests per second"
+    },
+    "availability": {
+      "unit": "%", "baseline": 99.0, "min": 0, "max": 99.999, "aliases": ["uptime"],
+      "description": "monthly availability"
+    },
+    "error_rate": {
+      "unit": "%", "baseline": 2.0, "min": 0, "max": 100, "aliases": ["errors"],
+      "description": "share of requests that fail"
+    },
+    "cost": {
+      "unit": "usd", "baseline": 100, "aliases": ["spend", "budget"],
+      "description": "monthly infrastructure and tooling spend"
+    }
+  },
+  "actions": {
+    "add_cache": {
+      "cost": 40, "provides": ["caching"],
+      "effects": {"latency": {"factor": 0.6}, "throughput": {"add": 100}},
+      "description": "put a read-through cache in front of the database"
+    },
+    "db_index": {
+      "cost": 10, "provides": ["indexing"],
+      "effects": {"latency": {"add": -30}, "throughput": {"add": 50}},
+      "description": "add indexes for the hot queries"
+    },
+    "async_queue": {
+      "cost": 25, "provides": ["async_processing"],
+      "effects": {"latency": {"add": -40}, "throughput": {"add": 200}, "error_rate": {"add": 0.2}},
+      "description": "move slow work onto a background queue"
+    },
+    "add_cdn": {
+      "cost": 50, "provides": ["edge_delivery"],
+      "effects": {"latency": {"add": -25}, "availability": {"add": 0.2}},
+      "description": "serve static assets from a CDN"
+    },
+    "upgrade_instance": {
+      "cost": 90, "provides": ["more_compute"], "conflicts": ["downsize_instance"],
+      "effects": {"latency": {"factor": 0.8}, "throughput": {"factor": 1.5}},
+      "description": "move to a larger instance class"
+    },
+    "downsize_instance": {
+      "cost": -40, "conflicts": ["upgrade_instance"],
+      "effects": {"latency": {"factor": 1.15}, "throughput": {"factor": 0.8}},
+      "description": "move to a smaller, cheaper instance class"
+    },
+    "load_balancer": {
+      "cost": 30, "provides": ["load_balancing"],
+      "effects": {"latency": {"add": 5}, "availability": {"add": 0.5}},
+      "description": "put a load balancer in front of the service"
+    },
+    "add_replica": {
+      "cost": 60, "max_uses": 5, "requires": ["load_balancer"], "provides": ["redundancy"],
+      "effects": {"throughput": {"add": 300}, "availability": {"add": 0.3}},
+      "description": "run one more replica behind the load balancer"
+    },
+    "failover_region": {
+      "cost": 120, "requires": ["load_balancer"], "provides": ["failover"],
+      "effects": {"availability": {"add": 0.8}, "latency": {"add": 10}},
+      "description": "stand up a warm standby region"
+    },
+    "health_checks": {
+      "cost": 5, "provides": ["monitoring"],
+      "effects": {"availability": {"add": 0.2}},
+      "description": "health checks and alerting"
+    },
+    "circuit_breakers": {
+      "cost": 15, "provides": ["fault_isolation"],
+      "effects": {"error_rate": {"factor": 0.5}, "availability": {"add": 0.1}},
+      "description": "fail fast on unhealthy dependencies"
+    },
+    "retry_with_backoff": {
+      "cost": 5, "provides": ["retries"],
+      "effects": {"error_rate": {"factor": 0.7}, "latency": {"add": 8}},
+      "description": "retry transient failures with exponential backoff"
+    },
+    "rate_limiter": {
+      "cost": 15, "provides": ["abuse_protection"],
+      "effects": {"availability": {"add": 0.3}, "error_rate": {"factor": 0.9}},
+      "description": "limit abusive clients"
+    },
+    "write_tests": {
+      "cost": 20, "provides": ["tested"],
+      "effects": {"error_rate": {"factor": 0.8}},
+      "description": "cover the change with automated tests"
+    },
+    "ci_pipeline": {
+      "cost": 15, "requires": ["write_tests"], "provides": ["automated_builds"],
+      "description": "build and test every commit"
+    },
+    "deploy": {
+      "cost": 5, "requires": ["ci_pipeline"], "provides": ["deployed"],
+      "description": "ship through the pipeline"
+    },
+    "feature_flags": {
+      "cost": 10, "provides": ["safe_rollout"],
+      "description": "gate the change behind a flag"
+    }
+  },
+  "goals": {
+    "optimize_system": {"needs": [], "description": "meet the stated constraints as cheaply as possible"},
+    "cut_costs": {"needs": [], "description": "reduce spend while meeting the stated constraints"},
+    "high_availability": {"needs": ["load_balancing", "failover", "monitoring"]},
+    "scale_out": {"needs": ["load_balancing", "redundancy"]},
+    "harden_api": {"needs": ["abuse_protection", "fault_isolation", "monitoring"]},
+    "resilience": {"needs": ["fault_isolation", "retries"]},
+    "launch_feature": {"needs": ["tested", "deployed", "safe_rollout"]},
+    "production_ready": {"needs": ["launch_feature", "resilience", "monitoring"]}
+  }
+}

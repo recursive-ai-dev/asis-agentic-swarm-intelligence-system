@@ -4,7 +4,61 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [2.0.0] — Unreleased
+## [3.0.0] — Unreleased
+
+ASIS becomes a working team. The six fixed roles of 2.0 passed a payload
+down an assembly line and wrapped it in labels; nothing was actually
+decided. 3.0 replaces them with twelve single-purpose specialists that
+coordinate like cells in a body and solve real planning problems against a
+knowledge base.
+
+### Added
+- **Knowledge bases** (`asis.knowledge`): metrics with units, baselines and
+  bounds; actions with costs, effects, capabilities, prerequisites, conflicts
+  and use limits; goals that decompose into capabilities and sub-goals.
+  Validated on load. A `web_service` example domain is bundled.
+- **Constraints** in task notation (`latency < 100ms`, `uptime >= 99.9%`,
+  `p99 < 0.1s`), with unit conversion, aliases and negation.
+- **The organism** (`asis.organism`): signals carry an expression payload and
+  structured data. Specialists declare *receptors* instead of being
+  addressed; the substrate delivers each signal to every matching tissue,
+  load-balances redundant cells, charges each task's *energy budget*, and
+  senses when a task goes quiescent or is exhausted.
+- **The team** (`asis.specialists`): intake, immune, decomposer, memory,
+  planner, estimator ×2, checker, repairer, optimizer, regulator, judge and
+  explainer. Tasks end solved (cheapest satisfying plan), unsolved (closest
+  plan and what it misses) or rejected (every reason, with "did you mean"
+  suggestions), and each comes with a report of how the team got there.
+- Memory recognises repeated problems by meaning, across wording and units,
+  and cuts the energy they need (24 → 14 on the demo task).
+- `asis solve "<task>"` (with `--json`, `--trace`, `--kb`, `--budget`),
+  `asis kb`, and `--kb` for `run` and `dashboard`.
+- `solve()`, `SwarmController.submit()/result()/remove_agent()`,
+  `TaskResult`, and a `Specialist` base class for adding your own.
+- `RuleEngine.rewrite()`: rewrites every subterm to a fixpoint (used for goal
+  decomposition).
+- Dashboard: ring layout for any number of specialists with the substrate at
+  the centre, a Tasks panel (status, energy, answer, click for the report),
+  and knowledge-base goals and metrics offered as chips in the task dialog.
+  `GET /api/kb`.
+- Tests: outcomes checked against exhaustive search, lesion tests for every
+  specialist, memory, isolation between concurrent tasks, energy
+  exhaustion, and the CLI contract (228 tests in total).
+
+### Changed
+- The trace format now records deliveries (one entry per receiver, `null`
+  when no specialist has a matching receptor), per-frame task summaries, and
+  per-task results.
+- `run_until_convergence()` is now an alias of `run()`, which stops when
+  nothing is in flight. `converged` means every task has an answer.
+- CI uses current major versions of the GitHub actions.
+
+### Removed
+- `Orchestrator`, `Analyst`, `Planner` (replaced), `Executor`, `Validator`,
+  `Synthesizer`, `AlgebraicMessage`, `MessageType`, `AgentRole` and
+  `inject_task()` (use `submit()`).
+
+## [2.0.0] — 2026-09-29 (not tagged)
 
 First packaged release.
 

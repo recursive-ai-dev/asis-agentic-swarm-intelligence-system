@@ -14,6 +14,7 @@ python -m PyInstaller --onefile --clean --noconfirm \
     --name asis \
     --paths . \
     --add-data "asis/dashboard.html:asis" \
+    --add-data "asis/domains:asis/domains" \
     asis/__main__.py
 
 echo "Build complete. Binary is located in dist/asis"

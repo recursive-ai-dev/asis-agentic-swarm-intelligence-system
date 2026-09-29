@@ -6,6 +6,7 @@ Serves ``dashboard.html`` and a small JSON API that drives a real
 API (all responses are JSON frames in the same shape as trace snapshots):
 
     GET  /api/state            current frame, no step taken
+    GET  /api/kb               the knowledge base (goals, metrics, actions)
     POST /api/step             advance the swarm one step
     POST /api/inject {"task"}  parse ASIS notation and inject it as a task
     POST /api/reset            discard the swarm and start a fresh one
@@ -22,36 +23,34 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from typing import Any, Dict, Optional, Tuple
 
-from asis.core import C, ParseError, SwarmController, __version__, create_default_swarm, parse_expression
+from asis.cli import DEMO_TASK
+from asis.core import ParseError, __version__, parse_expression
+from asis.knowledge import KnowledgeBase
+from asis.organism import SwarmController
+from asis.specialists import create_default_swarm
 
 MAX_BODY_BYTES = 64 * 1024
 MAX_TASK_CHARS = 2000
 
 
-def _demo_task():
-    return C.compose(
-        C.goal("optimize_system"),
-        C.constraint("latency < 100ms"),
-        C.constraint("throughput > 1000rps")
-    )
-
-
 class DashboardSession:
     """A swarm shared by all dashboard clients, guarded by a lock."""
 
-    def __init__(self, demo: bool = True):
+    def __init__(self, demo: bool = True, kb: Optional[KnowledgeBase] = None):
         self._lock = threading.Lock()
         self._demo = demo
+        self._kb = kb or KnowledgeBase.default()
         self._swarm = self._new_swarm()
 
     def _new_swarm(self) -> SwarmController:
-        swarm = create_default_swarm()
+        swarm = create_default_swarm(self._kb)
         if self._demo:
-            swarm.inject_task(_demo_task())
+            swarm.submit(DEMO_TASK)
         return swarm
 
     def _frame(self, frame: Dict[str, Any]) -> Dict[str, Any]:
         frame["version"] = __version__
+        frame["knowledge_base"] = self._kb.name
         return frame
 
     def state(self) -> Dict[str, Any]:
@@ -66,11 +65,14 @@ class DashboardSession:
     def inject(self, text: str) -> Dict[str, Any]:
         expression = parse_expression(text)
         with self._lock:
-            task_id = self._swarm.inject_task(expression)
+            task_id = self._swarm.submit(text)
             frame = self._frame(self._swarm.snapshot())
         frame["task_id"] = task_id
         frame["expression"] = expression.serialize()
         return frame
+
+    def knowledge_base(self) -> Dict[str, Any]:
+        return self._kb.to_dict()
 
     def reset(self) -> Dict[str, Any]:
         with self._lock:
@@ -124,6 +126,8 @@ def make_handler(session: DashboardSession):
                 self._send(HTTPStatus.OK, html, "text/html; charset=utf-8")
             elif path == "/api/state":
                 self._json(HTTPStatus.OK, session.state())
+            elif path == "/api/kb":
+                self._json(HTTPStatus.OK, session.knowledge_base())
             else:
                 self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
@@ -155,15 +159,17 @@ def make_handler(session: DashboardSession):
     return Handler
 
 
-def create_server(host: str = "127.0.0.1", port: int = 8765, demo: bool = True) -> ThreadingHTTPServer:
-    server = ThreadingHTTPServer((host, port), make_handler(DashboardSession(demo=demo)))
+def create_server(host: str = "127.0.0.1", port: int = 8765, demo: bool = True,
+                  kb: Optional[KnowledgeBase] = None) -> ThreadingHTTPServer:
+    server = ThreadingHTTPServer((host, port), make_handler(DashboardSession(demo=demo, kb=kb)))
     server.daemon_threads = True
     return server
 
 
-def serve(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True, demo: bool = True) -> int:
+def serve(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True, demo: bool = True,
+          kb: Optional[KnowledgeBase] = None) -> int:
     try:
-        server = create_server(host, port, demo)
+        server = create_server(host, port, demo, kb)
     except OSError as e:
         print(f"error: could not listen on {host}:{port}: {e}", file=sys.stderr)
         return 1

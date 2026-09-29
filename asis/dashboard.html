@@ -424,6 +424,74 @@ body {
   box-shadow: 0 0 20px rgba(0, 240, 255, 0.1);
 }
 
+.tasks-panel {
+  right: 20px;
+  top: 316px;
+  bottom: 240px;
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+}
+
+.tasks-panel .panel-body { max-height: none; flex: 1; }
+
+.task-item {
+  padding: 8px 10px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  background: var(--glass);
+  border: 1px solid transparent;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+}
+
+.task-item.clickable { cursor: pointer; }
+.task-item.clickable:hover { border-color: var(--border-glow); }
+.task-top { display: flex; justify-content: space-between; gap: 8px; }
+.task-text { color: var(--text-primary); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.task-status { text-transform: uppercase; font-size: 10px; letter-spacing: 1px; flex-shrink: 0; }
+.task-energy { height: 3px; background: rgba(255,255,255,0.06); border-radius: 2px; margin: 6px 0; }
+.task-energy > div { height: 100%; background: var(--cyan); border-radius: 2px; }
+.task-result { color: var(--text-secondary); font-size: 10px; }
+.task-empty { color: var(--text-secondary); font-size: 12px; padding: 4px; }
+
+.msg-rejected { border-left-color: #ff4d6d; background: rgba(255, 77, 109, 0.04); }
+.msg-proposal { border-left-color: var(--orange); background: rgba(255, 136, 0, 0.03); }
+.msg-vital { border-left-color: var(--text-secondary); background: rgba(255, 255, 255, 0.02); }
+
+.modal.report { width: 760px; }
+.modal.report pre {
+  max-height: 60vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-glow);
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 16px;
+}
+
+.modal-vocab { margin: -4px 0 10px; font-size: 11px; }
+.modal-vocab > div { margin-bottom: 6px; line-height: 2; }
+.vocab-label { color: var(--text-secondary); margin-right: 8px; font-family: 'JetBrains Mono', monospace; }
+.chip {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  padding: 2px 8px;
+  margin: 0 4px 0 0;
+  border-radius: 10px;
+  border: 1px solid var(--border-glow);
+  background: transparent;
+  color: var(--cyan);
+  cursor: pointer;
+}
+.chip.metric { color: var(--gold); }
+.chip:hover { border-color: var(--cyan); }
+
 .modal-help {
   font-size: 11px;
   line-height: 1.6;
@@ -522,7 +590,7 @@ body {
 
 /* Responsive */
 @media (max-width: 1200px) {
-  .left-panel, .right-panel { width: 260px; }
+  .left-panel, .right-panel, .tasks-panel { width: 260px; }
 }
 </style>
 </head>
@@ -586,6 +654,15 @@ body {
   </div>
 </div>
 
+<!-- Right Panel: Tasks -->
+<div class="ui-layer tasks-panel panel">
+  <div class="panel-header">
+    <span>Tasks</span>
+    <span id="task-count">0 Total</span>
+  </div>
+  <div class="panel-body" id="task-list"></div>
+</div>
+
 <!-- Bottom Panel: Message Log & Expression Tree -->
 <div class="ui-layer bottom-panel">
   <div class="panel" style="flex: 1.5;">
@@ -625,17 +702,30 @@ body {
 <!-- Task Modal -->
 <div class="modal-overlay" id="modal">
   <div class="modal">
-    <h2>Inject Algebraic Task</h2>
+    <h2>Give the Team a Task</h2>
     <textarea id="task-input" placeholder="optimize_system ⊗ latency < 100ms ⊗ throughput > 1000rps"></textarea>
     <div class="modal-help">
       <code>⊗</code>/<code>*</code> compose · <code>⊕</code>/<code>|</code> union · <code>¬</code>/<code>~</code> negate · <code>( )</code> group<br>
-      Prefix a category with <code>goal:</code>, <code>action:</code>, <code>entity:</code>, <code>state:</code>…
-      Otherwise text with a comparison is a constraint and anything else is a goal.
+      Goals and constraints combine with <code>⊗</code>; <code>¬action:x</code> forbids an action,
+      <code>action:x</code> requires one, <code>(a ⊕ b)</code> offers alternative goals.
+      Text with a comparison is a constraint; anything else is a goal.
     </div>
+    <div class="modal-vocab" id="modal-vocab"></div>
     <div class="modal-error" id="modal-error" role="alert"></div>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal()">Cancel</button>
       <button class="btn primary" onclick="injectTask()">Inject</button>
+    </div>
+  </div>
+</div>
+
+<!-- Report Modal -->
+<div class="modal-overlay" id="report-modal">
+  <div class="modal report">
+    <h2 id="report-title">Report</h2>
+    <pre id="report-body"></pre>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeReport()">Close</button>
     </div>
   </div>
 </div>
@@ -655,29 +745,38 @@ body {
 
 const STEP_INTERVAL_MS = 800;
 
-// Visual layout per agent id. Agents the engine reports that are not listed
-// here are placed on a ring around the centre.
-const AGENT_STYLE = {
-  orchestrator: { color: '#00f0ff', x: 0, y: -120 },
-  analyst: { color: '#b829dd', x: -180, y: -40 },
-  planner: { color: '#ff00aa', x: 180, y: -40 },
-  executor: { color: '#00ff88', x: -120, y: 100 },
-  validator: { color: '#ffd700', x: 0, y: 140 },
-  synthesizer: { color: '#ff8800', x: 120, y: 100 }
+// Colours per tissue. Cells of the same tissue (e.g. redundant estimators)
+// share a colour. Agents are laid out on a ring in the order a task usually
+// flows through them; unknown agents are appended.
+const TISSUE_COLORS = {
+  intake: '#00f0ff', immune: '#ff4d6d', decomposer: '#b829dd', memory: '#7aa2ff',
+  planner: '#ff00aa', estimator: '#00ff88', checker: '#ffd700', repairer: '#ff8800',
+  optimizer: '#c3e88d', regulator: '#f78cff', judge: '#f0f0f0', explainer: '#89ddff'
 };
-const FALLBACK_COLORS = ['#7aa2ff', '#ff6b6b', '#c3e88d', '#f78c6c', '#89ddff'];
+const FALLBACK_COLORS = ['#ff6b6b', '#f78c6c', '#a3be8c', '#b48ead', '#88c0d0'];
+const RING_ORDER = ['intake', 'immune', 'decomposer', 'memory', 'planner', 'estimator',
+  'checker', 'repairer', 'optimizer', 'regulator', 'judge', 'explainer'];
 
 const MESSAGE_TYPES = {
-  DIRECTIVE: { color: '#00f0ff', class: 'msg-directive' },
-  QUERY: { color: '#b829dd', class: 'msg-query' },
-  RESULT: { color: '#00ff88', class: 'msg-result' },
-  VALIDATION: { color: '#ffd700', class: 'msg-validation' },
-  SYNTHESIS: { color: '#ff00aa', class: 'msg-synthesis' },
-  DELEGATION: { color: '#ff8800', class: 'msg-directive' },
-  FEEDBACK: { color: '#ff4444', class: 'msg-validation' },
-  SIGNAL: { color: '#8888a0', class: '' },
-  CONSTRAINT: { color: '#ff6b6b', class: 'msg-validation' },
-  HEARTBEAT: { color: '#8888a0', class: '' }
+  TASK: { color: '#00f0ff', class: 'msg-directive' },
+  OPENED: { color: '#00f0ff', class: 'msg-directive' },
+  CLEARED: { color: '#00ff88', class: 'msg-result' },
+  REJECTED: { color: '#ff4d6d', class: 'msg-rejected' },
+  REQUIREMENTS: { color: '#b829dd', class: 'msg-query' },
+  PROPOSAL: { color: '#ff8800', class: 'msg-proposal' },
+  PLAN: { color: '#ff8800', class: 'msg-proposal' },
+  ESTIMATE: { color: '#00ff88', class: 'msg-result' },
+  VERDICT: { color: '#ffd700', class: 'msg-validation' },
+  QUIESCENT: { color: '#8888a0', class: 'msg-vital' },
+  EXHAUSTED: { color: '#ff4d6d', class: 'msg-rejected' },
+  ESCALATE: { color: '#ff00aa', class: 'msg-synthesis' },
+  SETTLE: { color: '#f0f0f0', class: 'msg-vital' },
+  RESULT: { color: '#00ff88', class: 'msg-result' }
+};
+
+const STATUS_COLORS = {
+  open: 'var(--cyan)', solved: 'var(--green)', unsolved: 'var(--gold)',
+  rejected: '#ff4d6d', stalled: '#ff4d6d'
 };
 
 const CATEGORY_COLORS = {
@@ -696,17 +795,15 @@ function truncate(text, n) {
 }
 
 class AgentView {
-  constructor(id, role, index) {
-    const style = AGENT_STYLE[id] || {
-      color: FALLBACK_COLORS[index % FALLBACK_COLORS.length],
-      x: Math.cos(index * 1.05) * 240,
-      y: Math.sin(index * 1.05) * 160
-    };
+  constructor(id, info, index) {
     this.id = id;
-    this.role = role;
-    this.color = style.color;
-    this.x = style.x;
-    this.y = style.y;
+    this.tissue = info.tissue || String(info.role || id).toLowerCase();
+    this.role = info.role || this.tissue.toUpperCase();
+    this.description = info.description || '';
+    this.color = TISSUE_COLORS[this.tissue] || FALLBACK_COLORS[index % FALLBACK_COLORS.length];
+    this.order = index;
+    this.x = 0;
+    this.y = 0;
     this.processed = 0;
     this.inboxSize = 0;
     this.activeUntil = 0;
@@ -759,7 +856,7 @@ class ReplaySource {
   initialFrame() {
     const first = this.trace.snapshots[0];
     const agents = first ? first.agents : (this.trace.agents || {});
-    return { step: 0, activity: 0, converged: false, agents, blackboard: {}, messages: [], message_count: 0 };
+    return { step: 0, activity: 0, converged: false, agents, blackboard: {}, messages: [], message_count: 0, tasks: {} };
   }
 
   async state() { return this.initialFrame(); }
@@ -800,6 +897,8 @@ class Dashboard {
     this.mouseY = -1000;
     this.hoveredAgent = null;
     this.selectedAgent = null;
+    this.hub = { id: 'substrate', x: 0, y: 0 };
+    this.tasks = {};
 
     this.bgCanvas = document.getElementById('bg-canvas');
     this.mainCanvas = document.getElementById('main-canvas');
@@ -832,10 +931,29 @@ class Dashboard {
     this.mainCanvas.width = this.width;
     this.mainCanvas.height = this.height;
     this.centerX = this.width / 2;
-    // Centre the graph in the band between the header (~80px) and the
-    // control buttons (fixed 240px + ~56px from the bottom), offset for the
-    // graph's asymmetric extent (nodes span -148..+204 including labels).
-    this.centerY = Math.max(180, (80 + this.height - 296) / 2 - 28);
+    // Fit the ring into the band between the header (~80px) and the control
+    // buttons (fixed 240px + ~56px from the bottom), and between the side panels.
+    const top = 80, bottom = this.height - 296;
+    this.centerY = Math.max(170, (top + bottom) / 2 - 8);
+    this.ringY = Math.max(70, (bottom - top) / 2 - 42);
+    this.ringX = Math.max(150, Math.min(300, (this.width - 700) / 2 - 40));
+    this.layoutAgents();
+  }
+
+  layoutAgents() {
+    const rank = a => {
+      const i = RING_ORDER.indexOf(a.tissue);
+      return [i < 0 ? RING_ORDER.length : i, a.order];
+    };
+    const ordered = [...(this.agents || [])].sort((a, b) => {
+      const [ra, oa] = rank(a), [rb, ob] = rank(b);
+      return ra - rb || oa - ob;
+    });
+    ordered.forEach((agent, i) => {
+      const angle = -Math.PI / 2 + (2 * Math.PI * i) / Math.max(1, ordered.length);
+      agent.x = Math.cos(angle) * this.ringX;
+      agent.y = Math.sin(angle) * this.ringY;
+    });
   }
 
   // --- source management ----------------------------------------------------
@@ -860,8 +978,10 @@ class Dashboard {
     this.treePayload = null;
     this.treeText = '';
     this.messageTimes = [];
+    this.tasks = {};
     document.getElementById('message-log').innerHTML = '';
     document.getElementById('convergence-banner').classList.remove('show');
+    this.renderTasks();
     this.drawExpressionTree();
   }
 
@@ -936,12 +1056,13 @@ class Dashboard {
 
   // --- frame application ----------------------------------------------------
 
-  ensureAgent(id, role) {
+  ensureAgent(id, info) {
     let agent = this.agentsById.get(id);
     if (!agent) {
-      agent = new AgentView(id, role, this.agents.length);
+      agent = new AgentView(id, info, this.agents.length);
       this.agents.push(agent);
       this.agentsById.set(id, agent);
+      this.layoutAgents();
     }
     return agent;
   }
@@ -950,21 +1071,22 @@ class Dashboard {
     const now = performance.now();
 
     for (const [id, info] of Object.entries(frame.agents || {})) {
-      const agent = this.ensureAgent(id, info.role);
+      const agent = this.ensureAgent(id, info);
       agent.processed = info.processed_count;
       agent.inboxSize = info.inbox_size;
+      agent.energySpent = info.energy_spent || 0;
     }
 
     for (const msg of frame.messages || []) {
       this.addLogEntry(msg);
       this.messageTimes.push(now);
-      const from = this.agentsById.get(msg.sender);
+      // The user and the substrate are not agents: their signals rise from the hub.
+      const from = this.agentsById.get(msg.sender) || this.hub;
       const to = this.agentsById.get(msg.receiver);
-      if (from) from.activeUntil = now + STEP_INTERVAL_MS;
-      if (from && to) {
-        from.connections.add(to.id);
-        this.activePackets.push({ type: msg.message_type, from, to, progress: 0, speed: 0.025 });
-      }
+      if (!to) continue;  // unheard: no specialist has a receptor for it
+      to.activeUntil = now + STEP_INTERVAL_MS;  // receivers do their work this step
+      if (from !== this.hub) from.connections.add(to.id);
+      this.activePackets.push({ type: msg.message_type, from, to, progress: 0, speed: 0.025 });
     }
 
     const messages = frame.messages || [];
@@ -975,9 +1097,11 @@ class Dashboard {
       this.drawExpressionTree();
     }
 
-    const keys = Object.keys(frame.blackboard || {});
-    const tasks = keys.filter(k => k.startsWith('task:')).length;
-    const done = keys.filter(k => k.startsWith('result:')).length;
+    this.tasks = frame.tasks || {};
+    const all = Object.values(this.tasks);
+    const done = all.filter(t => t.status !== 'open' && t.status !== 'stalled').length;
+    const tasks = all.length;
+    this.renderTasks();
 
     document.getElementById('step-counter').textContent = `Step ${frame.step}`;
     document.getElementById('metric-messages').textContent = frame.message_count;
@@ -993,6 +1117,38 @@ class Dashboard {
     if (this.converged && !wasConverged && frame.step > 0) this.showBanner();
 
     this.updateAgentList();
+  }
+
+  renderTasks() {
+    const list = document.getElementById('task-list');
+    const entries = Object.entries(this.tasks || {}).reverse();
+    document.getElementById('task-count').textContent = `${entries.length} Total`;
+    if (!entries.length) {
+      list.innerHTML = '<div class="task-empty">No tasks yet — inject one.</div>';
+      return;
+    }
+    list.innerHTML = '';
+    for (const [id, t] of entries) {
+      const item = document.createElement('div');
+      item.className = 'task-item';
+      const pct = t.budget ? Math.max(0, Math.min(100, (t.energy / t.budget) * 100)) : 0;
+      const result = t.result
+        ? `${escapeHtml(truncate(t.result.plan, 40))}${t.result.cost != null ? ` · cost ${escapeHtml(t.result.cost)}` : ''}`
+        : `effort ${escapeHtml(t.effort)} · ${escapeHtml(t.plans_considered)} plans`;
+      item.innerHTML = `
+        <div class="task-top">
+          <span class="task-text" title="${escapeHtml(t.text)}">${escapeHtml(truncate(t.text, 38))}</span>
+          <span class="task-status" style="color: ${STATUS_COLORS[t.status] || 'var(--text-secondary)'}">${escapeHtml(t.status)}</span>
+        </div>
+        <div class="task-energy" title="energy ${escapeHtml(t.energy)}/${escapeHtml(t.budget)}"><div style="width: ${pct}%"></div></div>
+        <div class="task-result">${result}</div>`;
+      if (t.report || t.result) {
+        item.classList.add('clickable');
+        item.title = 'Show report';
+        item.addEventListener('click', () => openReport(id));
+      }
+      list.appendChild(item);
+    }
   }
 
   showBanner() {
@@ -1030,7 +1186,7 @@ class Dashboard {
         <div class="agent-color" style="background: ${agent.color}; box-shadow: 0 0 10px ${agent.color}"></div>
         <div class="agent-info">
           <div class="agent-name">${escapeHtml(agent.id)}</div>
-          <div class="agent-role">${escapeHtml(agent.role)} • ${agent.processed} processed</div>
+          <div class="agent-role">${agent.processed} processed • ${agent.energySpent || 0} energy</div>
         </div>
         <div class="agent-status ${state}">${state}</div>
       `;
@@ -1142,9 +1298,25 @@ class Dashboard {
     }
   }
 
+  drawHub() {
+    const ctx = this.ctx;
+    ctx.strokeStyle = 'rgba(0, 240, 255, 0.18)';
+    ctx.setLineDash([3, 6]);
+    ctx.beginPath();
+    ctx.arc(this.centerX, this.centerY, 16, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(255,255,255,0.28)';
+    ctx.font = '400 9px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('SUBSTRATE', this.centerX, this.centerY + 30);
+  }
+
   drawAgents() {
     const ctx = this.ctx;
     this.hoveredAgent = null;
+    this.drawHub();
 
     for (const agent of this.agents) {
       const x = this.centerX + agent.x;
@@ -1194,10 +1366,7 @@ class Dashboard {
       ctx.font = '600 11px "JetBrains Mono", monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(agent.id.toUpperCase(), x, y + radius + 18);
-      ctx.font = '400 9px "JetBrains Mono", monospace';
-      ctx.fillStyle = 'rgba(255,255,255,0.5)';
-      ctx.fillText(agent.role, x, y + radius + 32);
+      ctx.fillText(agent.id.toUpperCase(), x, y + radius + 16);
 
       if (agent.inboxSize > 0) {
         ctx.fillStyle = '#ff00aa';
@@ -1341,10 +1510,11 @@ class Dashboard {
     const state = agent.state;
     tooltip.innerHTML = `
       <div style="color: ${agent.color}; font-weight: bold; margin-bottom: 4px;">${escapeHtml(agent.id.toUpperCase())}</div>
-      <div>Role: ${escapeHtml(agent.role)}</div>
+      <div style="color: var(--text-secondary); margin-bottom: 6px;">${escapeHtml(agent.description)}</div>
       <div>State: <span style="color: ${state === 'processing' ? 'var(--magenta)' : 'var(--green)'}">${state}</span></div>
       <div>Processed: ${agent.processed} messages</div>
       <div>Inbox: ${agent.inboxSize} pending</div>
+      <div>Energy spent: ${agent.energySpent || 0}</div>
     `;
   }
 
@@ -1409,11 +1579,45 @@ function resetSimulation() {
   dashboard.reset();
 }
 
+async function loadVocabulary() {
+  const el = document.getElementById('modal-vocab');
+  if (!dashboard.source || dashboard.source.kind !== 'live' || el.dataset.loaded) return;
+  try {
+    const kb = await dashboard.source.request('GET', '/api/kb');
+    const chip = (text, cls) => `<button type="button" class="chip ${cls}" data-insert="${escapeHtml(text)}">${escapeHtml(text)}</button>`;
+    el.innerHTML = `
+      <div><span class="vocab-label">Goals</span>${Object.keys(kb.goals).map(g => chip(g, 'goal')).join('')}</div>
+      <div><span class="vocab-label">Metrics</span>${Object.entries(kb.metrics).map(([m, d]) => chip(`${m} < ${d.baseline}${d.unit || ''}`, 'metric')).join('')}</div>`;
+    el.querySelectorAll('.chip').forEach(btn => btn.addEventListener('click', () => {
+      const input = document.getElementById('task-input');
+      const add = btn.dataset.insert;
+      input.value = input.value.trim() ? `${input.value.trim()} ⊗ ${add}` : add;
+      input.focus();
+    }));
+    el.dataset.loaded = '1';
+  } catch (err) {
+    el.textContent = '';
+  }
+}
+
+function openReport(taskId) {
+  const t = (dashboard.tasks || {})[taskId];
+  if (!t) return;
+  document.getElementById('report-title').textContent = `Task ${taskId}`;
+  document.getElementById('report-body').textContent = t.report || `Status: ${t.status}\n${(t.result && t.result.reason) || ''}`;
+  document.getElementById('report-modal').classList.add('active');
+}
+
+function closeReport() {
+  document.getElementById('report-modal').classList.remove('active');
+}
+
 function openModal() {
   if (document.getElementById('inject-btn').disabled) return;
   document.getElementById('modal-error').textContent = '';
   document.getElementById('modal').classList.add('active');
   document.getElementById('task-input').focus();
+  loadVocabulary();
 }
 
 function closeModal() {
@@ -1449,7 +1653,10 @@ document.getElementById('trace-file').addEventListener('change', async e => {
 
 document.addEventListener('keydown', e => {
   const modalOpen = document.getElementById('modal').classList.contains('active');
-  if (e.key === 'Escape') closeModal();
+  if (e.key === 'Escape') {
+    closeModal();
+    closeReport();
+  }
   if (e.key === 'Enter' && e.ctrlKey) {
     e.preventDefault();
     modalOpen ? injectTask() : openModal();
@@ -1464,6 +1671,10 @@ document.addEventListener('keydown', e => {
 
 document.getElementById('modal').addEventListener('click', e => {
   if (e.target.id === 'modal') closeModal();
+});
+
+document.getElementById('report-modal').addEventListener('click', e => {
+  if (e.target.id === 'report-modal') closeReport();
 });
 
 start();

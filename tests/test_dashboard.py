@@ -10,6 +10,8 @@ import pytest
 from asis import C, ConceptCategory, Operator, ParseError, create_default_swarm, parse_expression
 from asis.server import MAX_BODY_BYTES, create_server
 
+DEMO = "optimize_system ⊗ latency < 100ms ⊗ throughput > 1000rps"
+
 # ============================================================================
 # PARSER
 # ============================================================================
@@ -61,9 +63,9 @@ class TestParseExpression:
 
     def test_parsed_task_runs_to_completion(self):
         swarm = create_default_swarm()
-        task_id = swarm.inject_task(parse_expression("optimize ⊗ latency < 100ms"))
-        assert swarm.run_until_convergence(max_steps=50)["converged"]
-        assert f"result:{task_id}" in swarm._blackboard.get_all()
+        task_id = swarm.submit(parse_expression("optimize_system ⊗ latency < 100ms"))
+        assert swarm.run()["converged"]
+        assert swarm.result(task_id).solved
 
 
 # ============================================================================
@@ -72,40 +74,42 @@ class TestParseExpression:
 
 
 class TestSnapshots:
-    def test_injected_task_is_logged_in_next_frame(self):
+    def test_first_frame_delivers_task_to_intake(self):
         swarm = create_default_swarm()
-        swarm.inject_task(C.goal("g"))
+        swarm.submit(DEMO)
         swarm.step()
         first = swarm.latest_snapshot["messages"][0]
-        assert (first["sender"], first["receiver"], first["message_type"]) == ("user", "orchestrator", "DIRECTIVE")
-        assert swarm._message_log[0].sender == "user"
+        assert (first["sender"], first["receiver"], first["message_type"]) == ("user", "intake", "TASK")
 
-    def test_frames_carry_payload_text_and_convergence(self):
+    def test_frames_carry_payload_text_tasks_and_convergence(self):
         swarm = create_default_swarm()
-        swarm.inject_task(C.goal("g"))
-        swarm.run_until_convergence(max_steps=50)
+        tid = swarm.submit(DEMO)
+        swarm.run()
         frames = swarm.export_trace()["snapshots"]
         assert frames[-1]["converged"] is True
         assert not any(f["converged"] for f in frames[:-1])
-        msg = frames[0]["messages"][0]
-        assert msg["payload_text"] == C.goal("g").serialize()
+        assert frames[0]["messages"][0]["payload_text"] == parse_expression(DEMO).serialize()
+        task = frames[-1]["tasks"][tid]
+        assert task["status"] == "solved"
+        assert task["result"]["cost"] == 255
+        assert "Status: SOLVED" in task["report"]
 
-    def test_step_by_step_converges_like_run(self):
+    def test_step_by_step_matches_run(self):
         a = create_default_swarm()
-        a.inject_task(C.goal("g"))
-        a.run_until_convergence(max_steps=50)
+        a.submit(DEMO)
+        a.run()
         b = create_default_swarm()
-        b.inject_task(C.goal("g"))
-        while not b.converged:
+        b.submit(DEMO)
+        while not b.idle:
             b.step()
         assert a.step_count == b.step_count
 
-    def test_injection_clears_convergence(self):
+    def test_new_task_reopens_convergence(self):
         swarm = create_default_swarm()
-        swarm.inject_task(C.goal("g"))
-        swarm.run_until_convergence(max_steps=50)
+        swarm.submit(DEMO)
+        swarm.run()
         assert swarm.converged
-        swarm.inject_task(C.goal("h"))
+        swarm.submit("launch_feature")
         assert not swarm.converged
 
 
@@ -156,33 +160,40 @@ class TestServer:
         status, frame = _json(server + "/api/state")
         assert status == 200
         assert frame["step"] == 0
-        assert set(frame["agents"]) == {"orchestrator", "analyst", "planner", "executor", "validator", "synthesizer"}
+        assert frame["knowledge_base"] == "web_service"
+        assert {"intake", "immune", "planner", "estimator-1", "estimator-2", "regulator", "judge"} <= set(frame["agents"])
+        assert len(frame["tasks"]) == 1
+
+    def test_knowledge_base_endpoint(self, server):
+        status, kb = _json(server + "/api/kb")
+        assert status == 200
+        assert "optimize_system" in kb["goals"] and "latency" in kb["metrics"]
 
     def test_step_advances_real_engine(self, server):
         status, frame = _json(server + "/api/step", "POST", {})
         assert status == 200
         assert frame["step"] == 1
         pairs = [(m["sender"], m["receiver"]) for m in frame["messages"]]
-        assert pairs == [("user", "orchestrator"), ("orchestrator", "planner")]
+        assert pairs == [("user", "intake")]
 
     def test_inject_and_run_to_result(self, server):
         _json(server + "/api/reset", "POST", {})
-        status, frame = _json(server + "/api/inject", "POST", {"task": "goal:ship ⊗ entity:api"})
+        status, frame = _json(server + "/api/inject", "POST", {"task": "launch_feature ⊗ cost < 250"})
         assert status == 200
         task_id = frame["task_id"]
-        assert frame["expression"] == C.compose(C.goal("ship"), C.entity("api")).serialize()
-        for _ in range(30):
+        assert frame["expression"] == C.compose(C.goal("launch_feature"), C.constraint("cost < 250")).serialize()
+        for _ in range(100):
             _, frame = _json(server + "/api/step", "POST", {})
             if frame["converged"]:
                 break
         assert frame["converged"]
-        assert f"result:{task_id}" in frame["blackboard"]
+        assert frame["tasks"][task_id]["status"] == "solved"
 
     def test_reset_starts_over(self, server):
         _json(server + "/api/step", "POST", {})
         _, frame = _json(server + "/api/reset", "POST", {})
         assert frame["step"] == 0
-        assert frame["blackboard"] == {}
+        assert list(frame["blackboard"]) == [f"task:{tid}" for tid in frame["tasks"]]  # just the demo task
 
     @pytest.mark.parametrize("body,raw", [
         ({"task": "(a"}, None),
