@@ -1,0 +1,4 @@
+include build-deb.sh
+include CHANGELOG.md
+recursive-include packaging *.py *.desktop *.svg *.1 copyright
+recursive-include scripts *.py

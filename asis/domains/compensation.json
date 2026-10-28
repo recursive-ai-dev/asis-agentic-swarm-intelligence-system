@@ -1,0 +1,23 @@
+{
+  "name": "compensation",
+  "description": "Coupled latency and cost constraints: a fast action needs a compensating saving before the pair is feasible.",
+  "metrics": {
+    "latency": {"unit": "ms", "baseline": 100, "min": 0},
+    "cost": {"unit": "usd", "baseline": 100, "min": 0}
+  },
+  "actions": {
+    "fast": {
+      "cost": 200,
+      "effects": {"latency": {"factor": 0.1}},
+      "description": "Reduce latency while increasing cost."
+    },
+    "cheap": {
+      "cost": -200,
+      "effects": {"latency": {"factor": 3}},
+      "description": "Save cost while increasing latency."
+    }
+  },
+  "goals": {
+    "balance": {"needs": [], "description": "Meet the stated latency and cost requirements together."}
+  }
+}

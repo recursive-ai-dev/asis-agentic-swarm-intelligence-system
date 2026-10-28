@@ -1,6 +1,6 @@
 # ASIS — Algebraic Swarm Intelligence System
 
-> *A deterministic team of single-purpose agents that plans against a knowledge base. Give it goals and constraints; get back the cheapest plan that meets them, or a precise account of why none exists.*
+> *A deterministic swarm planner that uses unmet constraints to compose bounded search operations. Give it goals and constraints; get back a checked plan, its computation history, and an honest account of search limits.*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.md)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
@@ -42,7 +42,7 @@ ASIS is built the same way:
 | Cells respond to hormones they have receptors for | Specialists declare **receptors** for signal kinds. Nobody addresses anybody; the substrate delivers each signal to every tissue that can hear it |
 | One genome in every cell | Every specialist reads the same **knowledge base**, but each only does its own job |
 | Extracellular medium | A shared **blackboard** where specialists leave specs, proposals and verdicts for each other |
-| Metabolism | Each task has an **energy budget**; every piece of work costs energy |
+| Metabolism | Each task has **message energy**; internal model evaluations are counted separately |
 | Homeostasis | The **regulator** raises search effort when a task stalls and calls for a decision when there is nothing left to try or energy runs out |
 | Negative feedback | The repairer stands down once any plan satisfies the task; the optimizer takes over |
 | Immune system | The **immune** specialist rejects malformed or contradictory tasks and quarantines invalid or already-seen plans |
@@ -57,11 +57,11 @@ ASIS is built the same way:
 | **intake** | `TASK` | Reads a task expression into goals, required/forbidden items and constraints |
 | **immune** | `OPENED`, `PROPOSAL` | Screens tasks (unknown names with "did you mean", unit mismatches, contradictions, impossible bounds) and plans (conflicts, missing prerequisites, forbidden actions, repeats) |
 | **decomposer** | `CLEARED` | Expands goals into required capabilities with the rule engine over the goal hierarchy |
-| **memory** | `REQUIREMENTS`, `RESULT` | Remembers solved problems by meaning and re-proposes the known answer |
+| **memory** | `REQUIREMENTS`, satisfied `VERDICT`, `RESULT` | Recalls model-guarded solutions and learns procedures after independent validation |
 | **planner** | `REQUIREMENTS` | Drafts the cheapest plan that provides every required capability |
 | **estimator** ×2 | `PLAN` | Predicts every metric for a plan |
 | **checker** | `ESTIMATE` | Compares predictions against constraints; records a verdict |
-| **repairer** | `VERDICT` (violated), `ESCALATE` | Proposes changes that shrink violations: additions at effort 1; removals, swaps and a wider beam at effort 2 |
+| **repairer** | `VERDICT` (violated), `ESCALATE` | Tries improving single moves; when those stall, composes bounded extensions through deferred tradeoff branches and recalls guarded procedures |
 | **optimizer** | `VERDICT` (satisfied) | Looks for a cheaper plan that still satisfies everything: single moves, then pairs |
 | **regulator** | `QUIESCENT`, `EXHAUSTED` | Homeostasis: escalate effort or call for a decision |
 | **judge** | `SETTLE`, `REJECTED` | Chooses the answer: the cheapest satisfying plan, else the closest miss |
@@ -89,6 +89,30 @@ The substrate only does physiology: it delivers signals, charges energy, and not
 
 ### Install
 ASIS has no runtime dependencies and needs Python 3.10 or newer.
+
+On Debian or Ubuntu with Python 3.10 or newer, build and install the native package:
+
+```bash
+./build-deb.sh
+sudo apt install ./dist/asis-swarm_3.1.0_all.deb
+asis --version
+asis dashboard
+```
+
+The build uses Python 3 and `dpkg-deb`; it needs no root access, pip, or network.
+The `all` package works on CPU architectures supported by the system Python.
+It installs `/usr/bin/asis`, a private application under `/usr/lib/asis-swarm`,
+a desktop launcher, an icon, and `man asis`. It does not start a background
+service. The desktop launcher opens the local dashboard on an available port,
+with a console showing its address; press Ctrl+C in that console to stop it.
+To uninstall, run `sudo apt remove asis-swarm`.
+
+The builder refuses existing outputs; use `./build-deb.sh --force` for an
+intentional rebuild. A `.deb.sha256` file accompanies the package. Set
+`SOURCE_DATE_EPOCH` to fix archive timestamps across source checkouts.
+
+For a Python environment instead:
+
 ```bash
 pip install .            # from a checkout
 pip install -e ".[dev]"  # editable install with test/lint tooling
@@ -105,6 +129,44 @@ asis solve "..." --kb my_domain.json --budget 800   # your own knowledge base
 ```
 
 Exit status: `0` solved, `2` not solved (the closest plan is reported), `3` rejected before planning, `1` usage or input error.
+
+### Compose compensating actions
+
+The bundled `compensation` domain reproduces a coupled-constraint failure of
+the earlier greedy repairer. Baseline latency and cost are 100. `fast` reduces
+latency but adds 200 cost; `cheap` saves 200 cost but triples latency. Either
+action alone makes total violation worse. Together they yield latency 30 and
+cost 100:
+
+```bash
+asis solve "latency <= 50ms ⊗ cost <= 100" --kb compensation --json
+asis solve "latency <= 50ms ⊗ cost <= 100" --kb compensation \
+    --search-depth 3 --beam-width 8 --search-evaluations 256 --trace compensation-trace.json
+```
+
+The composer uses an executable, typed operation registry: generate choices,
+extend with prerequisites, predict, measure each residual, and check a stated
+condition. Prediction never silently discards a candidate. A branch can be
+deferred when one residual improves while another worsens. Its remaining
+residuals prioritize the next extension. The search graph describes computation;
+domain actions remain an unordered multiset.
+
+Composition starts at effort 2 when ordinary repair stalls. Depth bounds the
+number of extension decisions (each includes prerequisite closure), beam width
+bounds retained branches, and `--search-evaluations` bounds composition model
+evaluations per task. This last allowance is **separate from greedy repair and
+optimization**, whose evaluations are also counted in the reported total.
+`--search-depth 1` provides a single-step comparison. The trace retains residual
+vectors, operation metadata, explored nodes, and reasons for deferring branches.
+This is a restricted composition grammar, not arbitrary program synthesis or an
+exhaustive coverage certificate.
+
+Useful extension procedures are stored in session memory with a complete model
+fingerprint. Reuse checks action availability, use limits, prerequisites,
+conflicts, forbidden actions, and the current task's requirements. Numeric
+thresholds may differ; every reused result is predicted and validated again.
+Memory is local to a running swarm, with no cross-domain role binding or disk
+persistence.
 
 ### See what a knowledge base offers
 ```bash
@@ -180,7 +242,7 @@ The loader validates everything: unknown references, requires-and-conflicts pair
 ## Python API
 
 ```python
-from asis import KnowledgeBase, create_default_swarm, solve
+from asis import KnowledgeBase, SearchConfig, create_default_swarm, solve
 
 result = solve("optimize_system ⊗ latency < 100ms ⊗ throughput > 1000rps")
 result.status        # "solved" | "unsolved" | "rejected" | "stalled" | "open"
@@ -188,6 +250,15 @@ result.plan          # {"add_cache": 1, "async_queue": 1, "upgrade_instance": 1}
 result.metrics       # predicted metrics for the chosen plan
 result.cost, result.violations, result.reason, result.report
 result.energy_used, result.budget
+result.model_evaluations   # all built-in prediction calls, including rejected moves
+result.plans_considered    # distinct candidates receiving a checker verdict
+result.assessment          # feasible_in_model | search_incomplete | rejected | pending
+result.optimality_proven   # False: the bounded heuristic search supplies no proof
+result.search_complete     # False: unvisited regions may remain
+
+result = solve("latency <= 50ms ⊗ cost <= 100",
+               kb=KnowledgeBase.load("asis/domains/compensation.json"),
+               search_config=SearchConfig(max_depth=3, beam_width=8, max_evaluations=256))
 
 # One organism, many tasks, shared memory:
 swarm = create_default_swarm(KnowledgeBase.load("kitchen.json"), energy_budget=400)
@@ -225,9 +296,10 @@ swarm.register_agent(Auditor())
 ## Guarantees
 
 - **Deterministic.** No randomness, threads or wall-clock time in the engine. Identical inputs produce byte-identical traces (tested).
-- **Optimal on the tested cases.** For constraint-only tasks in the bundled domain, the team's answer matches an exhaustive search (tested for several tasks). In general the search is heuristic, so a cheaper plan may exist when it is only reachable through several cost-increasing steps.
-- **Always answers.** Every task ends solved, unsolved (with the closest plan and what it misses), or rejected (with every reason), unless a vital specialist is missing.
-- **Bounded.** Each task has an energy budget (400 by default). When it is spent, the task is still judged on what was found.
+- **Checked feasibility.** `solved` means a candidate satisfies the declared requirements and effect model. The optimizer returns the cheapest checked candidate it finds. Some tested examples match an exhaustive oracle; a cheaper unvisited candidate may still exist.
+- **Honest limits.** `unsolved` means no satisfying plan was found within this search. It does not establish infeasibility. Results explicitly report `assessment`, `optimality_proven`, and `search_complete`.
+- **Answers on termination.** With the default team and sufficient step allowance, tasks end solved, unsolved (with the closest checked plan), or rejected. Removing a vital specialist can stall a task; a step limit can leave it open.
+- **Bounded composition.** Each task has message energy (400 by default) and a separate composition evaluation allowance (256), depth (3), and beam width (8). Reported model evaluations count every built-in prediction, including rejected candidates and report baselines. Message energy alone is not a fair measure of search cost.
 - **Isolated.** Many tasks in one organism reach the same answers as each task alone (tested).
 
 ### Lesions
@@ -248,6 +320,7 @@ What happens when one specialist is removed (`tests/test_team.py::TestLesions`):
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │  asis/specialists.py  The team: 12 single-purpose specialists      │
+│  asis/search.py       Typed operations, bounded composer, memory  │
 │  asis/organism.py     Signals, receptors, blackboard, substrate    │
 │  asis/knowledge.py    Metrics, actions, goals, constraints, units  │
 │  asis/core.py         Algebra, ASIS notation parser, rule engine   │
@@ -267,6 +340,8 @@ pip install -e ".[dev]"
 pytest
 pytest --cov=asis --cov-report=term-missing
 ruff check .
+python scripts/benchmark_search.py --output dist/search-benchmark.json
+./build-deb.sh
 ```
 
 | Suite | Covers |
@@ -277,6 +352,14 @@ ruff check .
 | `test_dashboard.py` | Notation parser, frame API, HTTP endpoints and input validation |
 | `test_regressions.py` | Past defects and the CLI contract (exit codes, JSON, custom knowledge bases) |
 | `test_stress.py` | Deep and wide expressions; 60 concurrent tasks in one organism |
+| `test_composition.py`, `test_work_accounting.py` | Deferred compensation, guarded reuse, graph typing, evaluation accounting and limits |
+| `test_cli_composition.py`, `test_packaging.py` | Search controls, bundled domains, Debian metadata, reproducibility, extracted CLI and dashboard |
+
+The benchmark compares depths 1, 2, and 3 on small two- and three-action
+compensation problems, including infeasible cases. It enumerates every multiset
+as an independent oracle and records all engine model evaluations and elapsed
+time. These synthetic checks establish correctness on the included cases;
+they do not establish a general efficiency advantage over fixed lookahead.
 
 ---
 
@@ -288,6 +371,8 @@ ruff check .
 | `asis/dashboard.html` | Dashboard client: renders engine frames live or from a trace (loads web fonts from Google Fonts) |
 | `asis_trace.json` | Sample trace produced by `asis run` |
 | `build.sh` | Builds a standalone binary with PyInstaller |
+| `build-deb.sh`, `packaging/` | Native Debian package builder, launcher, desktop integration and manual |
+| `scripts/benchmark_search.py` | Reproducible small-domain comparison against exhaustive enumeration |
 | `CHANGELOG.md` | Release notes |
 
 ## Keyboard Shortcuts (Dashboard)
@@ -303,7 +388,8 @@ ruff check .
 ## Limits
 
 - The effect model is additive-then-multiplicative per metric; interactions between actions beyond `requires` and `conflicts` are not modelled.
-- Search is heuristic (greedy repair with escalation, local cost optimisation). It is fast and explainable, not exhaustive.
+- Search is heuristic: greedy repair, bounded residual-guided extension compositions, and local cost optimization. Branches dropped by depth, beam, or residual priority may contain solutions; no global optimality or infeasibility is certified.
+- Deferred compositions currently add actions; removing or swapping actions remains part of the existing repairer and optimizer. Operation metadata and model fingerprints preserve declared assumptions, rather than supplying a proof of those assumptions.
 - Expressions are processed recursively; trees nested deeper than roughly 800–900 levels raise `RecursionError`.
 
 ## License

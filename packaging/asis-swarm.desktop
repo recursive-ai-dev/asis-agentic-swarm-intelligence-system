@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=ASIS Swarm Dashboard
+GenericName=Constraint Planner
+Comment=Explore action plans and residual-guided search in a local dashboard
+Exec=asis dashboard --port 0
+Icon=asis-swarm
+Terminal=true
+StartupNotify=false
+Categories=Science;
+Keywords=Planning;Constraints;Swarm;Search;

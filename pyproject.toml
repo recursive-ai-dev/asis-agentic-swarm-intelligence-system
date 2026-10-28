@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "asis-swarm"
 dynamic = ["version"]
-description = "A deterministic team of single-purpose agents that plans against a knowledge base: goals and constraints in, the cheapest satisfying plan (or a precise account of why none exists) out."
+description = "A deterministic swarm planner with bounded residual-guided search, checked solutions and reusable procedures."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE.md"]
@@ -33,6 +33,7 @@ Repository = "https://github.com/recursive-ai-dev/asis-agentic-swarm-intelligenc
 
 [tool.setuptools]
 packages = ["asis"]
+include-package-data = false
 
 [tool.setuptools.package-data]
 asis = ["dashboard.html", "domains/*.json"]

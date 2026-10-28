@@ -45,6 +45,8 @@ jobs:
           python-version: "3.14"
       - run: pip install build
       - run: python -m build
+      - run: ./build-deb.sh
+      - run: dpkg-deb --info dist/asis-swarm_*_all.deb
       - uses: actions/upload-artifact@v5
         with:
           name: dist

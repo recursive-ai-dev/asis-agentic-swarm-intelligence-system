@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from enum import Enum, unique
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple, Union
 
-__version__ = "3.0.0"
+__version__ = "3.1.0"
 
 
 # ============================================================================

@@ -26,6 +26,7 @@ from typing import Any, Callable, ClassVar, Dict, Iterable, List, Mapping, Optio
 
 from asis.core import ConceptAtom, ConceptCategory, Expression, Operator, __version__, parse_expression
 from asis.knowledge import KnowledgeBase, Plan, plan_key
+from asis.search import SearchConfig
 
 
 class Kind(str, Enum):
@@ -138,6 +139,19 @@ class Context:
     kb: KnowledgeBase
     board: Blackboard
     step: int
+    search_config: SearchConfig = field(default_factory=SearchConfig)
+
+    def predict(self, task_id: str, plan: Plan) -> Dict[str, float]:
+        """Evaluate the model and count the work, including discarded candidates.
+
+        Message energy and model evaluations are separate measurements. This
+        gateway deliberately does not cache predictions or make acceptance
+        decisions; the search and the independent checker retain those roles.
+        """
+        metrics = self.kb.estimate(plan)
+        key = f"evaluations:{task_id}"
+        self.board.write(key, self.board.read(key, 0) + 1, SUBSTRATE)
+        return metrics
 
 
 class Specialist(ABC):
@@ -218,6 +232,11 @@ class TaskResult:
     report: str
     energy_used: int
     budget: int
+    model_evaluations: int = 0
+    plans_considered: int = 0
+    assessment: str = "pending"
+    optimality_proven: bool = False
+    search_complete: bool = False
 
     @property
     def solved(self) -> bool:
@@ -229,6 +248,9 @@ class TaskResult:
             "metrics": self.metrics, "cost": self.cost, "violations": self.violations,
             "reason": self.reason, "report": self.report,
             "energy_used": self.energy_used, "budget": self.budget,
+            "model_evaluations": self.model_evaluations, "plans_considered": self.plans_considered,
+            "assessment": self.assessment, "optimality_proven": self.optimality_proven,
+            "search_complete": self.search_complete,
         }
 
 
@@ -254,9 +276,13 @@ class SwarmController:
 
     DEFAULT_BUDGET = 400
 
-    def __init__(self, kb: Optional[KnowledgeBase] = None, energy_budget: int = DEFAULT_BUDGET):
+    def __init__(self, kb: Optional[KnowledgeBase] = None, energy_budget: int = DEFAULT_BUDGET,
+                 search_config: Optional[SearchConfig] = None):
         self.kb = kb or KnowledgeBase.default()
+        if isinstance(energy_budget, bool) or not isinstance(energy_budget, int) or energy_budget <= 0:
+            raise ValueError("energy_budget must be a positive integer")
         self.energy_budget = energy_budget
+        self.search_config = search_config if search_config is not None else SearchConfig()
         self._agents: Dict[str, Specialist] = {}
         self._board = Blackboard()
         self._outbox: List[Signal] = []
@@ -297,6 +323,8 @@ class SwarmController:
             n += 1
             task_id = f"{base}-{n}"
         budget = self.energy_budget if budget is None else budget
+        if isinstance(budget, bool) or not isinstance(budget, int) or budget <= 0:
+            raise ValueError("budget must be a positive integer")
         self._tasks[task_id] = TaskRecord(task_id, text.strip(), expression, budget, budget, self._step)
         self._board.write(f"task:{task_id}", {"text": text.strip(), "expression": expression.serialize()}, "user")
         self._outbox.append(self._stamp(Signal(Kind.TASK, task_id, "user", expression, {"text": text.strip()})))
@@ -321,6 +349,13 @@ class SwarmController:
             reason=r.get("reason", "" if rec.status != OPEN else "task has not finished"),
             report=self._board.read(f"report:{task_id}", ""),
             energy_used=rec.budget - rec.energy, budget=rec.budget,
+            model_evaluations=self._board.read(f"evaluations:{task_id}", 0),
+            plans_considered=len(self._board.items(f"verdict:{task_id}:")),
+            assessment=r.get("assessment", "feasible_in_model" if rec.status == "solved" else
+                             "rejected" if rec.status == "rejected" else
+                             "search_incomplete" if self._status(rec) in ("unsolved", STALLED) else "pending"),
+            optimality_proven=bool(r.get("optimality_proven", False)),
+            search_complete=bool(r.get("search_complete", False)),
         )
 
     # --- stepping -------------------------------------------------------------
@@ -354,7 +389,7 @@ class SwarmController:
         outgoing, self._outbox = self._outbox, []
         deliveries = self._deliver(outgoing)
 
-        ctx = Context(self.kb, self._board, self._step)
+        ctx = Context(self.kb, self._board, self._step, self.search_config)
         emitted: List[Signal] = []
         for agent in list(self._agents.values()):
             while agent._inbox:
@@ -424,6 +459,8 @@ class SwarmController:
 
     def run(self, max_steps: int = 1000) -> Dict[str, Any]:
         """Step until nothing is in flight (or ``max_steps``). Returns a summary."""
+        if isinstance(max_steps, bool) or not isinstance(max_steps, int) or max_steps < 0:
+            raise ValueError("max_steps must be a non-negative integer")
         for _ in range(max_steps):
             if self.idle:
                 break
@@ -459,6 +496,7 @@ class SwarmController:
 
     def _task_summary(self, rec: TaskRecord) -> Dict[str, Any]:
         r = self._board.read(f"result:{rec.task_id}")
+        result = self.result(rec.task_id)
         return {
             "text": rec.text,
             "status": self._status(rec),
@@ -466,9 +504,13 @@ class SwarmController:
             "budget": rec.budget,
             "effort": self._board.read(f"effort:{rec.task_id}", 1),
             "plans_considered": len(self._board.items(f"proposal:{rec.task_id}:")),
+            "model_evaluations": result.model_evaluations,
+            "assessment": result.assessment,
             "result": None if r is None else {
                 "plan": plan_key(plan_from_data(r.get("plan", []))), "cost": r.get("cost"),
                 "reason": r.get("reason", ""),
+                "assessment": result.assessment, "model_evaluations": result.model_evaluations,
+                "optimality_proven": result.optimality_proven, "search_complete": result.search_complete,
             },
             "report": self._board.read(f"report:{rec.task_id}"),
         }

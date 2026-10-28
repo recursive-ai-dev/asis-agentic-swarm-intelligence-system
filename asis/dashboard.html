@@ -453,6 +453,8 @@ body {
 .task-energy { height: 3px; background: rgba(255,255,255,0.06); border-radius: 2px; margin: 6px 0; }
 .task-energy > div { height: 100%; background: var(--cyan); border-radius: 2px; }
 .task-result { color: var(--text-secondary); font-size: 10px; }
+.task-search { color: var(--text-secondary); font-size: 10px; margin-top: 4px; line-height: 1.5; }
+.task-assessment { color: var(--text-primary); }
 .task-empty { color: var(--text-secondary); font-size: 12px; padding: 4px; }
 
 .msg-rejected { border-left-color: #ff4d6d; background: rgba(255, 77, 109, 0.04); }
@@ -639,8 +641,8 @@ body {
         <div class="metric-label">Messages</div>
       </div>
       <div class="metric-card">
-        <div class="metric-value" id="metric-throughput">0</div>
-        <div class="metric-label">Throughput</div>
+        <div class="metric-value" id="metric-evaluations">0</div>
+        <div class="metric-label" title="Every model call, including discarded search candidates">Model Evaluations</div>
       </div>
       <div class="metric-card">
         <div class="metric-value" id="metric-tasks">0/0</div>
@@ -777,6 +779,11 @@ const MESSAGE_TYPES = {
 const STATUS_COLORS = {
   open: 'var(--cyan)', solved: 'var(--green)', unsolved: 'var(--gold)',
   rejected: '#ff4d6d', stalled: '#ff4d6d'
+};
+
+const ASSESSMENT_LABELS = {
+  feasible_in_model: 'Feasible in model', search_incomplete: 'Search incomplete',
+  rejected: 'Rejected before search', pending: 'Search pending'
 };
 
 const CATEGORY_COLORS = {
@@ -1105,7 +1112,7 @@ class Dashboard {
 
     document.getElementById('step-counter').textContent = `Step ${frame.step}`;
     document.getElementById('metric-messages').textContent = frame.message_count;
-    document.getElementById('metric-throughput').textContent = frame.activity;
+    document.getElementById('metric-evaluations').textContent = all.reduce((sum, t) => sum + (t.model_evaluations || 0), 0);
     document.getElementById('metric-tasks').textContent = `${done}/${tasks}`;
     document.getElementById('agent-count').textContent = `${this.agents.length} Agents`;
 
@@ -1134,14 +1141,23 @@ class Dashboard {
       const pct = t.budget ? Math.max(0, Math.min(100, (t.energy / t.budget) * 100)) : 0;
       const result = t.result
         ? `${escapeHtml(truncate(t.result.plan, 40))}${t.result.cost != null ? ` · cost ${escapeHtml(t.result.cost)}` : ''}`
-        : `effort ${escapeHtml(t.effort)} · ${escapeHtml(t.plans_considered)} plans`;
+        : `effort ${escapeHtml(t.effort)}`;
+      const assessment = t.assessment || (t.result && t.result.assessment);
+      const fallback = t.status === 'solved' ? 'Feasible in model'
+        : t.status === 'rejected' ? 'Rejected before search'
+        : t.status === 'unsolved' || t.status === 'stalled' ? 'Search incomplete' : 'Search pending';
+      const label = ASSESSMENT_LABELS[assessment] || fallback;
+      const evaluations = t.model_evaluations;
+      const search = evaluations == null ? ''
+        : `${escapeHtml(evaluations)} model evaluations · ${escapeHtml(t.plans_considered || 0)} checked plans`;
       item.innerHTML = `
         <div class="task-top">
           <span class="task-text" title="${escapeHtml(t.text)}">${escapeHtml(truncate(t.text, 38))}</span>
           <span class="task-status" style="color: ${STATUS_COLORS[t.status] || 'var(--text-secondary)'}">${escapeHtml(t.status)}</span>
         </div>
         <div class="task-energy" title="energy ${escapeHtml(t.energy)}/${escapeHtml(t.budget)}"><div style="width: ${pct}%"></div></div>
-        <div class="task-result">${result}</div>`;
+        <div class="task-result">${result}</div>
+        <div class="task-search"><span class="task-assessment">${escapeHtml(label)}</span>${search ? `<br>${search}` : ''}</div>`;
       if (t.report || t.result) {
         item.classList.add('clickable');
         item.title = 'Show report';

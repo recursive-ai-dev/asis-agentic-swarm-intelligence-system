@@ -4,7 +4,37 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [3.0.0] — Unreleased
+## [3.1.0] — 2026-10-27
+
+### Added
+- Typed executable search operations and short prediction/residual/check graphs.
+- Bounded residual-guided extension compositions at effort 2, retaining
+  tradeoff candidates that greedy aggregate-violation filtering discarded.
+  Depth, beam width, and a per-task composition evaluation allowance are
+  configurable through `SearchConfig` and CLI flags.
+- Guarded session-local procedure memory with a complete model fingerprint and
+  fresh validation on reuse. Whole-solution recall now also guards the model.
+- Total model-evaluation accounting, including discarded candidates, alongside
+  message energy and distinct independently checked candidate counts.
+- Explicit model-feasibility/search-incomplete assessments and false-by-default
+  optimality/coverage flags, visible through the API, traces and dashboard.
+- Bundled `compensation` domain for the `fast`/`cheap` regression, selectable
+  with `--kb compensation`; bundled `web_service` is also selectable by name.
+- Dependency-free Debian package build, SHA256 checksum, private Python runtime
+  launcher, desktop integration, application icon and manual page. No runtime
+  downloads or background services.
+- Small-domain benchmark with exhaustive correctness oracle, search-depth
+  comparisons, model work counts and elapsed time; new search and packaging
+  regression coverage.
+
+### Changed
+- CLI validates positive work allowances and reports malformed JSON and invalid
+  encodings without a traceback.
+- Documentation describes heuristic results without promising global
+  optimality or infeasibility. The restricted composition mechanism remains a
+  research implementation, not evidence of general superiority to lookahead.
+
+## [3.0.0]
 
 ASIS becomes a working team. The six fixed roles of 2.0 passed a payload
 down an assembly line and wrapped it in labels; nothing was actually

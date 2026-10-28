@@ -50,6 +50,7 @@ from asis.organism import (
     plan_expression,
     plan_from_data,
 )
+from asis.search import BoundedComposer, GuardedProcedure, ProcedureMemory, SearchConfig, model_fingerprint
 
 MAX_EFFORT = 2
 BEAM = {1: 1, 2: 3}
@@ -431,24 +432,35 @@ def _unprovidable(caps: List[str], group: List[List[str]], reqs: Mapping[str, An
 
 class Memory(Specialist):
     tissue = "memory"
-    receptors = (Receptor(Kind.REQUIREMENTS),
+    receptors = (Receptor(Kind.REQUIREMENTS), Receptor(Kind.VERDICT, when=lambda s: s.data["satisfied"]),
                  Receptor(Kind.RESULT, when=lambda s: s.data.get("status") == "solved"))
-    description = "Remembers solved tasks and re-proposes the known answer when the same problem returns."
+    description = "Remembers model-guarded solutions and independently checked compositions for reuse."
 
     def __init__(self, agent_id: Optional[str] = None):
         super().__init__(agent_id)
         self._solutions: Dict[str, Tuple[Plan, str]] = {}
+        self.procedure_memory = ProcedureMemory()
 
     @staticmethod
-    def fingerprint(board, task_id: str) -> str:
+    def fingerprint(board, task_id: str, kb: Optional[KnowledgeBase] = None) -> str:
         spec = board.read(f"spec:{task_id}") or {}
         reqs = _requirements(board, task_id)
         meaning = sorted((c["metric"], c["op"], c["value"]) for c in spec.get("constraints", []))
-        body = json.dumps({"c": meaning, "r": reqs}, sort_keys=True)
+        body = json.dumps({"c": meaning, "r": reqs, "model": model_fingerprint(kb) if kb is not None else None},
+                          sort_keys=True)
         return hashlib.sha256(body.encode()).hexdigest()
 
     def handle(self, signal: Signal, ctx: Context) -> Iterable[Signal]:
-        key = self.fingerprint(ctx.board, signal.task_id)
+        if signal.kind == Kind.VERDICT:
+            history = ctx.board.read(f"composition:{signal.task_id}") or {}
+            record = history.get("procedures", {}).get(plan_key(plan_from_data(signal.data["plan"])))
+            if record is not None:
+                self.procedure_memory.remember(GuardedProcedure(record["model"], tuple(record["actions"]),
+                                                                tuple(tuple(o) for o in record["obligations"])))
+            self._publish_procedures(ctx)
+            return []
+        self._publish_procedures(ctx)
+        key = self.fingerprint(ctx.board, signal.task_id, ctx.kb)
         if signal.kind == Kind.RESULT:
             self._solutions.setdefault(key, (plan_from_data(signal.data["plan"]), signal.task_id))
             return []
@@ -458,6 +470,10 @@ class Memory(Specialist):
         plan, source = known
         return [_proposal(self, signal.task_id, plan, None, f"recalled: the same problem was solved in task {source}")]
 
+    def _publish_procedures(self, ctx: Context) -> None:
+        compatible = self.procedure_memory.compatible(ctx.kb)
+        ctx.board.write("procedure-library", [p.to_dict() for p in compatible], self.agent_id)
+
 
 class Estimator(Specialist):
     tissue = "estimator"
@@ -466,7 +482,7 @@ class Estimator(Specialist):
 
     def handle(self, signal: Signal, ctx: Context) -> Iterable[Signal]:
         plan = plan_from_data(signal.data["plan"])
-        metrics = ctx.kb.estimate(plan)
+        metrics = ctx.predict(signal.task_id, plan)
         atoms = [ConceptAtom.create(m, ConceptCategory.METRIC, "estimate", {"value": f"{v:.6g}"})
                  for m, v in metrics.items()]
         payload = C.compose(plan_expression(plan), Expression.from_operator(Operator.UNION, *atoms))
@@ -501,8 +517,8 @@ class Repairer(Specialist):
     tissue = "repairer"
     receptors = (Receptor(Kind.VERDICT, when=lambda s: not s.data["satisfied"]), Receptor(Kind.ESCALATE))
     metabolic_cost = 2
-    description = ("Proposes changes that shrink constraint violations. Effort 1 tries single additions; "
-                   "effort 2 also tries removals and swaps and keeps more candidates.")
+    description = ("Proposes repairs, then composes bounded compensating extensions from residuals when single moves stall. "
+                   "Reuses checked computations from guarded procedure memory.")
 
     def handle(self, signal: Signal, ctx: Context) -> Iterable[Signal]:
         tid = signal.task_id
@@ -528,7 +544,7 @@ class Repairer(Specialist):
     def _repair(self, plan: Plan, tid: str, ctx: Context, level: int) -> List[Signal]:
         kb, board = ctx.kb, ctx.board
         reqs, constraints = _requirements(board, tid), _constraints(board, tid)
-        before = kb.estimate(plan)
+        before = ctx.predict(tid, plan)
         base_v, base_cost = total_violation(before, constraints), before["cost"]
         watched = sorted({c.metric for c in constraints})
 
@@ -546,7 +562,7 @@ class Repairer(Specialist):
             key = plan_key(candidate)
             if board.has(f"proposal:{tid}:{key}") or not plan_is_valid(candidate, reqs, kb):
                 continue
-            after = kb.estimate(candidate)
+            after = ctx.predict(tid, candidate)
             v = total_violation(after, constraints)
             if v < base_v - 1e-12 or (level >= 2 and v <= base_v and after["cost"] < base_cost):
                 scored.append((v, after["cost"], key, candidate, f"{move}: {_changes(before, after, watched)}"))
@@ -559,6 +575,42 @@ class Repairer(Specialist):
             out.append(_proposal(self, tid, candidate, plan_key(plan), move))
             if len(out) == BEAM[level]:
                 break
+        if not out and level >= 2 and ctx.search_config.max_depth > 1:
+            return self._compose(plan, before, tid, ctx, reqs, constraints)
+        return out
+
+    def _compose(self, plan: Plan, before: Mapping[str, float], tid: str, ctx: Context,
+                 reqs: Mapping[str, Any], constraints: Sequence[Constraint]) -> List[Signal]:
+        board, kb = ctx.board, ctx.kb
+        history = board.read(f"composition:{tid}") or {"evaluations": 0, "runs": [], "procedures": {}}
+        allowance = ctx.search_config.max_evaluations - history["evaluations"]
+        if allowance <= 0:
+            return []
+        composer = BoundedComposer(ctx.search_config)
+        procedures = tuple(GuardedProcedure(p["model"], tuple(p["actions"]), tuple(tuple(o) for o in p["obligations"]))
+                           for p in board.read("procedure-library", []))
+        result = composer.compose(plan, before, kb, constraints, reqs["forbid_actions"],
+                                  lambda p: ctx.predict(tid, p), lambda p: plan_is_valid(p, reqs, kb),
+                                  lambda p: board.has(f"proposal:{tid}:{plan_key(p)}"),
+                                  allowance=allowance, procedures=procedures)
+        # Copy nested state before recording so historical trace frames remain
+        # immutable when subsequent branches consume the same task allowance.
+        history = {**history, "evaluations": history["evaluations"] + result.evaluations,
+                   "config": ctx.search_config.to_dict(), "runs": [*history["runs"], result.to_dict()],
+                   "procedures": dict(history["procedures"]), "coverage_complete": False}
+        out = []
+        for candidate in result.candidates[:BEAM[2]]:
+            if len(candidate.actions) < 2:
+                continue
+            key = plan_key(candidate.plan)
+            procedure = GuardedProcedure(model_fingerprint(kb), candidate.actions, candidate.obligations)
+            history["procedures"][key] = procedure.to_dict()
+            label = "reuse guarded composition" if result.reused else "compose residual-guided repairs"
+            trail = "; ".join(f"{', '.join(metrics)} → add {action}" for action, metrics
+                              in zip(candidate.actions, candidate.obligations, strict=True))
+            move = f"{label}: {trail}; {_changes(before, candidate.prediction.metrics, sorted(before))}"
+            out.append(_proposal(self, tid, candidate.plan, plan_key(plan), move))
+        board.write(f"composition:{tid}", history, self.agent_id)
         return out
 
 
@@ -581,7 +633,7 @@ class Optimizer(Specialist):
                 if key in seen or board.has(f"proposal:{tid}:{key}") or not plan_is_valid(candidate, reqs, kb):
                     continue
                 seen.add(key)
-                after = kb.estimate(candidate)
+                after = ctx.predict(tid, candidate)
                 if after["cost"] >= cost or total_violation(after, constraints) > 0:
                     continue
                 if best is None or (after["cost"], key) < best[0]:
@@ -672,6 +724,9 @@ class Judge(Specialist):
                       "plan": best["plan"] if best else [], "metrics": best["metrics"] if best else {},
                       "cost": best["cost"] if best else None, "violations": best["violations"] if best else [],
                       "plans_considered": len(verdicts)}
+        result.update(assessment="feasible_in_model" if result["status"] == "solved" else
+                      "rejected" if result["status"] == "rejected" else "search_incomplete",
+                      optimality_proven=False, search_complete=False)
         board.write(f"result:{tid}", result, self.agent_id)
         plan = plan_from_data(result["plan"])
         return [self.emit(Kind.RESULT, tid, C.compose(C.state(result["status"]), plan_expression(plan)), **result)]
@@ -700,7 +755,7 @@ class Explainer(Specialist):
         plan = plan_from_data(result["plan"])
         lines.append(f"Why it stopped: {result['reason']}")
         lines.append("")
-        lines.append("Plan:" if plan else "Plan: no changes needed")
+        lines.append("Plan:" if plan else "Plan: no actions selected")
         for name, n in plan:
             a = kb.actions[name]
             count = f" ×{n}" if n > 1 else ""
@@ -710,7 +765,7 @@ class Explainer(Specialist):
 
         metrics = result["metrics"]
         if metrics:
-            baseline = kb.estimate(())
+            baseline = ctx.predict(tid, ())
             constraints = _constraints(board, tid)
             lines.append("")
             lines.append("Predicted metrics:")
@@ -744,6 +799,13 @@ class Explainer(Specialist):
             lines += [f"  {i}. {step}" for i, step in enumerate(reversed(lineage), 1)]
         lines.append("")
         lines.append(f"Plans evaluated: {result.get('plans_considered', 0)}")
+        lines.append(f"Model evaluations (including discarded candidates): {board.read(f'evaluations:{tid}', 0)}")
+        lines.append("Assessment: feasible in the model; optimality has not been established." if result["status"] == "solved"
+                     else "Assessment: search incomplete; infeasibility has not been established.")
+        composition = board.read(f"composition:{tid}")
+        if composition:
+            lines.append(f"Composition evaluations: {composition['evaluations']}/{ctx.search_config.max_evaluations}; "
+                         f"depth ≤ {ctx.search_config.max_depth}, beam ≤ {ctx.search_config.beam_width}")
         return "\n".join(lines)
 
 
@@ -760,17 +822,18 @@ def default_team(estimators: int = 2) -> List[Specialist]:
 
 
 def create_default_swarm(kb: Optional[KnowledgeBase] = None,
-                         energy_budget: int = SwarmController.DEFAULT_BUDGET) -> SwarmController:
-    swarm = SwarmController(kb, energy_budget)
+                         energy_budget: int = SwarmController.DEFAULT_BUDGET,
+                         search_config: Optional[SearchConfig] = None) -> SwarmController:
+    swarm = SwarmController(kb, energy_budget, search_config=search_config)
     for agent in default_team():
         swarm.register_agent(agent)
     return swarm
 
 
 def solve(task: Any, kb: Optional[KnowledgeBase] = None, budget: Optional[int] = None,
-          max_steps: int = 1000) -> TaskResult:
+          max_steps: int = 1000, search_config: Optional[SearchConfig] = None) -> TaskResult:
     """Solve one task with a fresh default team and return the result."""
-    swarm = create_default_swarm(kb)
+    swarm = create_default_swarm(kb, search_config=search_config)
     task_id = swarm.submit(task, budget=budget)
     swarm.run(max_steps=max_steps)
     return swarm.result(task_id)

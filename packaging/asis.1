@@ -1,0 +1,114 @@
+.TH ASIS 1 "2026-10-27" "ASIS @VERSION@" "User Commands"
+.SH NAME
+asis \- compose bounded searches for action plans against a knowledge base
+.SH SYNOPSIS
+.B asis solve
+.I task
+.RI [ options ]
+.br
+.B asis run
+.RI [ options ]
+.br
+.B asis kb
+.RI [ options ]
+.br
+.B asis dashboard
+.RI [ options ]
+.SH DESCRIPTION
+ASIS is an offline, deterministic constraint planner. A team of specialists
+proposes action multisets, predicts their metrics and independently checks
+the declared constraints. Residual-guided composition can retain intermediate
+tradeoffs and search for compensating actions within explicit work limits.
+The predictions describe the knowledge-base model, not observed measurements.
+.PP
+Solved results establish model feasibility. A bounded search does not establish
+global optimality or infeasibility. Unsolved results mean no feasible plan was
+found within the available search.
+.SH COMMANDS
+.TP
+.B solve
+Solve the supplied task expression and print a report, or JSON with
+.BR --json .
+Exit 0 means solved, 2 means not solved, 3 means rejected before planning,
+and 1 means an input or I/O error.
+.TP
+.B run
+Solve the bundled demonstration task. A bare
+.B asis
+is shorthand for this command. Use
+.B --no-trace
+to avoid writing the default asis_trace.json file.
+.TP
+.B kb
+List the active knowledge base's metrics, goals and actions. Use
+.B --json
+for a machine-readable representation.
+.TP
+.B dashboard
+Serve a local browser dashboard backed by the planner. The default bind
+address is 127.0.0.1 and the default port is 8765. Use
+.B --port 0
+to select an unused port,
+.B --no-browser
+to suppress opening a browser, or
+.B --no-demo
+to start without a demonstration task.
+The desktop launcher opens a terminal with the dashboard server; press Ctrl+C
+in that terminal to stop it. Closing the browser alone does not stop the server.
+.SH COMMON OPTIONS
+.TP
+.BI --kb " PATH_OR_NAME"
+Use a JSON knowledge base or a bundled domain name such as web_service or
+compensation. The default is web_service.
+.TP
+.B --version
+Print the application version.
+.TP
+.B --help
+Print help for the command.
+.SH SEARCH OPTIONS
+The solve and run commands accept these options:
+.TP
+.BI --search-depth " N"
+Maximum number of extension decisions in a composed repair (default 3).
+Each decision also includes its required prerequisite actions.
+.TP
+.BI --beam-width " N"
+Maximum number of deferred candidates retained per search layer (default 8).
+.TP
+.BI --search-evaluations " N"
+Per-task model-evaluation allowance for composition (default 256).
+Ordinary greedy repairs and optimizer evaluations are counted separately and
+do not consume this composition allowance.
+.TP
+.BI --max-steps " N"
+Maximum signal-delivery rounds (default 1000).
+.PP
+The solve command additionally accepts:
+.TP
+.BI --budget " N"
+Message-delivery energy allowance (default 400). Model evaluations are
+reported separately from message-delivery energy.
+.TP
+.BI --trace " PATH"
+Write the full deterministic execution trace.
+.SH EXAMPLES
+.nf
+asis solve 'latency <= 50ms * cost <= 100' --kb compensation --json
+asis solve 'optimize_system' --budget 800 --trace run.json
+asis dashboard --port 0
+.fi
+.SH FILES
+.TP
+.I /usr/lib/asis-swarm/asis
+Private Python application and bundled knowledge-base domains.
+.TP
+.I /usr/share/doc/asis-swarm
+README, license and release notes.
+.SH SECURITY
+The dashboard has no authentication and binds to localhost by default.
+Use an appropriate trusted interface when changing the bind address.
+.SH AUTHORS
+ASIS contributors.
+.SH SEE ALSO
+.BR python3 (1)

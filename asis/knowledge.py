@@ -231,40 +231,76 @@ class KnowledgeBase:
 
     @staticmethod
     def from_dict(data: Mapping[str, Any]) -> KnowledgeBase:
+        """Load the declared JSON schema and collect input errors before construction.
+
+        Omitted or null optional sections/entries retain their empty defaults.
+        Other JSON types are rejected explicitly, including empty arrays and
+        booleans, rather than being mistaken for empty objects.
+        """
+        if not isinstance(data, Mapping):
+            raise KnowledgeBaseError(["knowledge base: expected an object"])
         problems: List[str] = []
+
+        def obj(where: str, value: Any) -> Mapping[str, Any]:
+            if value is None:
+                return {}
+            if not isinstance(value, Mapping):
+                problems.append(f"{where}: expected an object")
+                return {}
+            return value
+
+        def text(where: str, value: Any, default: str = "", nonempty: bool = False) -> str:
+            if not isinstance(value, str) or (nonempty and not value.strip()):
+                expected = "a nonempty string" if nonempty else "a string"
+                problems.append(f"{where}: expected {expected}")
+                return default
+            return value
+
+        def entries(section: str, label: str, value: Any) -> Iterable[Tuple[str, Mapping[str, Any]]]:
+            for key, entry in obj(section, value).items():
+                if not isinstance(key, str) or not key.strip():
+                    problems.append(f"{section} key {key!r}: expected a nonempty string name")
+                    continue
+                yield key, obj(f"{label} {key}", entry)
 
         def num(where: str, value: Any, default: float = 0.0) -> float:
             if value is None:
                 return default
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
-                problems.append(f"{where}: expected a finite number, got {value!r}")
-                return default
-            return float(value)
+            if not isinstance(value, bool) and isinstance(value, (int, float)):
+                try:
+                    converted = float(value)
+                except OverflowError:
+                    problems.append(f"{where}: expected a finite number within floating-point range")
+                    return default
+                if math.isfinite(converted):
+                    return converted
+            problems.append(f"{where}: expected a finite number, got {value!r}")
+            return default
 
         def names(where: str, value: Any) -> Tuple[str, ...]:
             if value is None:
                 return ()
-            if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
-                problems.append(f"{where}: expected a list of names")
+            if not isinstance(value, list) or not all(isinstance(v, str) and v.strip() for v in value):
+                problems.append(f"{where}: expected a list of nonempty names")
                 return ()
             return tuple(value)
 
+        kb_name = text("name", data.get("name", "unnamed"), "unnamed", nonempty=True)
+        kb_description = text("description", data.get("description", ""))
         metrics = []
-        for name, m in (data.get("metrics") or {}).items():
-            m = m or {}
+        for name, m in entries("metrics", "metric", data.get("metrics")):
             metrics.append(Metric(
-                name=name, unit=m.get("unit", ""), baseline=num(f"metric {name}.baseline", m.get("baseline")),
+                name=name, unit=text(f"metric {name}.unit", m.get("unit", "")),
+                baseline=num(f"metric {name}.baseline", m.get("baseline")),
                 minimum=None if m.get("min") is None else num(f"metric {name}.min", m.get("min")),
                 maximum=None if m.get("max") is None else num(f"metric {name}.max", m.get("max")),
                 aliases=names(f"metric {name}.aliases", m.get("aliases")),
-                description=m.get("description", ""),
+                description=text(f"metric {name}.description", m.get("description", "")),
             ))
         actions = []
-        for name, a in (data.get("actions") or {}).items():
-            a = a or {}
+        for name, a in entries("actions", "action", data.get("actions")):
             effects = {}
-            for metric, e in (a.get("effects") or {}).items():
-                e = e or {}
+            for metric, e in entries(f"action {name}.effects", f"action {name}.effect", a.get("effects")):
                 effects[metric] = Effect(add=num(f"action {name}.effects.{metric}.add", e.get("add")),
                                          factor=num(f"action {name}.effects.{metric}.factor", e.get("factor"), 1.0))
             max_uses = a.get("max_uses", 1)
@@ -276,14 +312,14 @@ class KnowledgeBase:
                 provides=frozenset(names(f"action {name}.provides", a.get("provides"))),
                 requires=names(f"action {name}.requires", a.get("requires")),
                 conflicts=frozenset(names(f"action {name}.conflicts", a.get("conflicts"))),
-                max_uses=max_uses, description=a.get("description", ""),
+                max_uses=max_uses, description=text(f"action {name}.description", a.get("description", "")),
             ))
-        goals = [Goal(name=name, needs=names(f"goal {name}.needs", (g or {}).get("needs")),
-                      description=(g or {}).get("description", ""))
-                 for name, g in (data.get("goals") or {}).items()]
+        goals = [Goal(name=name, needs=names(f"goal {name}.needs", g.get("needs")),
+                      description=text(f"goal {name}.description", g.get("description", "")))
+                 for name, g in entries("goals", "goal", data.get("goals"))]
         if problems:
             raise KnowledgeBaseError(problems)
-        return KnowledgeBase(data.get("name", "unnamed"), metrics, actions, goals, data.get("description", ""))
+        return KnowledgeBase(kb_name, metrics, actions, goals, kb_description)
 
     @staticmethod
     def load(path: str | Path) -> KnowledgeBase:
@@ -402,6 +438,7 @@ class KnowledgeBase:
         """Structural problems: unknown actions, over-use, missing prerequisites, conflicts."""
         problems = []
         counts = plan_counts(plan)
+        reported_conflicts = set()
         for name, n in plan:
             action = self.actions.get(name)
             if action is None:
@@ -413,8 +450,10 @@ class KnowledgeBase:
                 if counts.get(r, 0) == 0:
                     problems.append(f"'{name}' requires '{r}'")
             for c in sorted(action.conflicts):
-                if counts.get(c, 0) and name < c:
-                    problems.append(f"'{name}' conflicts with '{c}'")
+                pair = tuple(sorted((name, c)))
+                if counts.get(c, 0) and pair not in reported_conflicts:
+                    reported_conflicts.add(pair)
+                    problems.append(f"'{pair[0]}' conflicts with '{pair[1]}'")
         return problems
 
     def provided(self, plan: Plan) -> FrozenSet[str]:

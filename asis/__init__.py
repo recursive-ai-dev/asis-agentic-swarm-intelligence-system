@@ -1,8 +1,8 @@
 """ASIS — Algebraic Swarm Intelligence System.
 
-A deterministic team of single-purpose specialists that plans against a
-knowledge base: give it a goal and constraints, get back the cheapest plan
-that meets them (or a precise account of why none does).
+A deterministic team of specialists with bounded residual-guided search.
+Plans are checked against a knowledge base; search work and limits remain
+visible, without implying global optimality or infeasibility.
 
 Modules: :mod:`asis.core` (algebra, parser, rule engine), :mod:`asis.knowledge`
 (domain model), :mod:`asis.organism` (signals and substrate),
@@ -44,6 +44,7 @@ from asis.organism import (
     SwarmController,
     TaskResult,
 )
+from asis.search import SearchConfig
 from asis.specialists import (
     Checker,
     Decomposer,
@@ -67,6 +68,6 @@ __all__ = [
     "ConstraintError", "Context", "Decomposer", "Effect", "Estimator", "Explainer", "Expression", "Goal",
     "Immune", "Intake", "Judge", "Kind", "KnowledgeBase", "KnowledgeBaseError", "Memory", "Metric",
     "Operator", "Optimizer", "ParseError", "Planner", "Receptor", "Regulator", "Repairer", "Rule",
-    "RuleEngine", "Signal", "Specialist", "SwarmController", "TaskResult", "__version__",
+    "RuleEngine", "SearchConfig", "Signal", "Specialist", "SwarmController", "TaskResult", "__version__",
     "create_default_swarm", "default_team", "main", "parse_expression", "plan_key", "solve",
 ]
